@@ -16,6 +16,7 @@ def test_marketplace_install_and_uninstall(client):
         "core.summary", "core.notes", "core.personal-notes", "core.mindmap"
     }
     assert {item["id"] for item in body["marketplace"]} >= {
+        "gloss.deep-research",
         "gloss.critical-review",
         "gloss.implementation-blueprint",
         "gloss.evidence-table",
@@ -123,6 +124,7 @@ def test_plugin_run_requires_installation(client, paper_id):
 def test_marketplace_plugins_declare_their_input_requirements(client):
     marketplace = {item["id"]: item for item in client.get("/api/plugins").json()["marketplace"]}
     assert all(item["requirements"] for item in marketplace.values())
+    assert marketplace["gloss.deep-research"]["requirements"] == ["body_text"]
     assert marketplace["gloss.equation-guide"]["requirements"] == ["body_text", "formulas"]
     assert marketplace["gloss.reproducibility-checklist"]["requirements"] == [
         "body_text", "method_content"
@@ -136,6 +138,152 @@ def test_marketplace_plugins_declare_their_input_requirements(client):
     assert marketplace["gloss.terminology-glossary"]["requirements"] == ["body_text", "terms"]
     assert marketplace["gloss.presentation-outline"]["requirements"] == ["body_text"]
     assert marketplace["gloss.reading-plan"]["requirements"] == ["body_text"]
+
+
+def test_deep_research_plugin_is_configurable_and_installable(client):
+    snapshot = client.get("/api/plugins").json()
+    deep_research = next(
+        item for item in snapshot["marketplace"]
+        if item["id"] == "gloss.deep-research"
+    )
+
+    assert deep_research["name_zh"] == "深度研究"
+    assert deep_research["tab_name"] == "Research"
+    assert deep_research["version"] == "1.1.0"
+    assert "network:research" in deep_research["permissions"]
+    assert "VERIFIED NETWORK RESEARCH" in deep_research["prompt"]
+    assert "external browsing" not in deep_research["prompt"]
+    assert "Never invent citations" in deep_research["prompt"]
+    properties = deep_research["contributes"]["configuration"]["properties"]
+    assert properties["focus"]["default"] == "comprehensive"
+    assert properties["depth"]["default"] == "exhaustive"
+    assert properties["includeResearchAgenda"]["default"] is True
+    assert properties["citePaperLocations"]["default"] is True
+
+    try:
+        installed = client.post("/api/plugins/gloss.deep-research/install")
+        assert installed.status_code == 200, installed.text
+        assert installed.json()["agent"]["name"] == "Deep Researcher"
+        assert installed.json()["id"] in {
+            item["id"] for item in client.get("/api/plugins").json()["installed"]
+        }
+    finally:
+        client.delete("/api/plugins/gloss.deep-research")
+
+
+def test_deep_research_retrieval_reaches_prompt_and_cached_metadata(
+    client, paper_id, monkeypatch
+):
+    from app.plugins import manager
+
+    assert client.post("/api/plugins/gloss.deep-research/install").status_code == 200
+    evidence = {
+        "searched_at": "2026-08-14T08:00:00+00:00",
+        "queries": ["Attention Is All You Need"],
+        "providers": ["Semantic Scholar", "OpenAlex"],
+        "source_count": 1,
+        "target": {"title": "Attention Is All You Need"},
+        "sources": [{
+            "source_id": "S1",
+            "title": "Retrieved Work",
+            "authors": ["A. Author"],
+            "year": 2024,
+            "abstract": "Evidence",
+            "url": "https://example.org/retrieved",
+            "doi": "10.1000/retrieved",
+            "citations": 4,
+            "database": "openalex",
+            "relation": "search",
+        }],
+        "paper_reference_excerpts": [],
+        "provider_status": [
+            {"provider": "OpenAlex", "query": "q", "ok": True, "result_count": 1, "error": ""}
+        ],
+    }
+    searches = 0
+    prompts: list[str] = []
+
+    async def collect(*_args, **_kwargs):
+        nonlocal searches
+        searches += 1
+        return evidence
+
+    async def complete(_system, user, **_kwargs):
+        prompts.append(user)
+        return "Report citing [S1]"
+
+    monkeypatch.setattr(manager.deep_research, "collect_external_evidence", collect)
+    monkeypatch.setattr(manager, "text_complete", complete)
+    try:
+        result = asyncio.run(
+            manager.run_plugin(paper_id, "gloss.deep-research", refresh=True)
+        )
+        cached = manager.get_cached_result(paper_id, "gloss.deep-research")
+
+        assert searches == 1
+        assert "=== VERIFIED NETWORK RESEARCH ===" in prompts[0]
+        assert "https://example.org/retrieved" in prompts[0]
+        assert result["research"]["source_count"] == 1
+        assert cached == result
+    finally:
+        client.delete("/api/plugins/gloss.deep-research")
+
+
+def test_deep_research_network_failure_stops_before_ai(client, paper_id, monkeypatch):
+    from app.plugins import manager
+
+    assert client.post("/api/plugins/gloss.deep-research/install").status_code == 200
+    ai_calls = 0
+
+    async def fail_search(*_args, **_kwargs):
+        raise manager.deep_research.DeepResearchNetworkError("network unavailable")
+
+    async def must_not_complete(*_args, **_kwargs):
+        nonlocal ai_calls
+        ai_calls += 1
+        return "fabricated"
+
+    monkeypatch.setattr(manager.deep_research, "collect_external_evidence", fail_search)
+    monkeypatch.setattr(manager, "text_complete", must_not_complete)
+    try:
+        with pytest.raises(manager.deep_research.DeepResearchNetworkError):
+            asyncio.run(
+                manager.run_plugin(paper_id, "gloss.deep-research", refresh=True)
+            )
+        assert ai_calls == 0
+    finally:
+        client.delete("/api/plugins/gloss.deep-research")
+
+
+def test_upgrade_installed_marketplace_plugins_is_first_party_only(tmp_path, monkeypatch):
+    from app.plugins import manager
+
+    monkeypatch.setattr(manager, "PLUGINS_DIR", tmp_path)
+    deleted: list[str] = []
+    monkeypatch.setattr(manager.store, "cache_delete_prefix", deleted.append)
+    old = manager.validate_manifest({
+        **next(item for item in manager.MARKETPLACE if item["id"] == "gloss.deep-research"),
+        "version": "1.0.0",
+        "permissions": ["paper:read", "ai:complete"],
+        "prompt": "Old local-only prompt.",
+    })
+    custom = manager.validate_manifest({
+        "id": "example.custom",
+        "api_version": 1,
+        "name": "Custom",
+        "version": "9.0.0",
+        "author": "User",
+        "description": "Must remain untouched.",
+        "permissions": ["paper:read", "ai:complete"],
+        "prompt": "Custom prompt.",
+    })
+    manager._write_manifest(old)
+    manager._write_manifest(custom)
+
+    assert manager.upgrade_installed_marketplace_plugins() == ["gloss.deep-research"]
+    assert manager.get_installed("gloss.deep-research")["version"] == "1.1.0"
+    assert manager.get_installed("example.custom")["prompt"] == "Custom prompt."
+    assert deleted == ["plugin:gloss.deep-research:"]
 
 
 @pytest.mark.parametrize(
@@ -349,5 +497,48 @@ def test_plugin_configuration_reaches_prompt_and_partitions_cache(
                     configuration={"strictness": "unsupported"},
                 )
             )
+    finally:
+        client.delete(f"/api/plugins/{plugin_id}")
+
+
+def test_plugins_inherit_reading_lens_guidance_and_cache_partition(
+    client, paper_id, monkeypatch
+):
+    from app.plugins import manager
+
+    plugin_id = "example.discipline-aware"
+    manifest = {
+        "id": plugin_id,
+        "api_version": 1,
+        "name": "Discipline Aware",
+        "version": "1.0.0",
+        "description": "Checks the shared reading lens.",
+        "permissions": ["paper:read", "ai:complete"],
+        "requirements": ["body_text"],
+        "prompt": "Analyze this paper in depth.",
+    }
+    assert client.post("/api/plugins/install", json={"manifest": manifest}).status_code == 200
+    systems: list[str] = []
+    cache_keys: list[str] = []
+
+    async def fake_complete(system, _user, **_kwargs):
+        systems.append(system)
+        return "result"
+
+    def capture_cache(_paper_id, key, _value):
+        cache_keys.append(key)
+
+    monkeypatch.setattr(manager, "text_complete", fake_complete)
+    monkeypatch.setattr(manager.store, "cache_set", capture_cache)
+    try:
+        client.patch(f"/api/papers/{paper_id}", json={"reading_lens": "humanities"})
+        asyncio.run(manager.run_plugin(paper_id, plugin_id, refresh=True))
+        client.patch(f"/api/papers/{paper_id}", json={"reading_lens": "stem"})
+        asyncio.run(manager.run_plugin(paper_id, plugin_id, refresh=True))
+
+        assert "primary and secondary sources" in systems[0]
+        assert "Do not demand experiments" in systems[0]
+        assert "evaluation metrics" in systems[1]
+        assert cache_keys[0] != cache_keys[1]
     finally:
         client.delete(f"/api/plugins/{plugin_id}")

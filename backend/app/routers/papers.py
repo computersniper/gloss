@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
@@ -44,6 +45,7 @@ class PaperPatch(BaseModel):
     title: str | None = None
     tags: list[str] | None = None
     year: str | None = None
+    reading_lens: Literal["auto", "humanities", "social_sciences", "stem"] | None = None
 
 
 @router.get("")

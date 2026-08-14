@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS papers (
     doi TEXT,
     n_pages INTEGER,
     tags TEXT DEFAULT '[]',
+    reading_lens TEXT NOT NULL DEFAULT 'auto',
     added_at REAL
 );
 CREATE TABLE IF NOT EXISTS highlights (
@@ -145,6 +146,13 @@ def _conn() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with _conn() as con:
         con.executescript(_SCHEMA)
+        paper_columns = {
+            row["name"] for row in con.execute("PRAGMA table_info(papers)").fetchall()
+        }
+        if "reading_lens" not in paper_columns:
+            con.execute(
+                "ALTER TABLE papers ADD COLUMN reading_lens TEXT NOT NULL DEFAULT 'auto'"
+            )
         drawing_columns = {
             row["name"] for row in con.execute("PRAGMA table_info(drawings)").fetchall()
         }
@@ -349,8 +357,8 @@ def create_paper(meta: dict[str, Any]) -> str:
     pid = meta.get("id") or _uid()
     with _conn() as con:
         con.execute(
-            """INSERT INTO papers (id,title,authors,year,abstract,source,arxiv_id,doi,n_pages,tags,added_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO papers (id,title,authors,year,abstract,source,arxiv_id,doi,n_pages,tags,reading_lens,added_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 pid,
                 meta.get("title", ""),
@@ -362,6 +370,7 @@ def create_paper(meta: dict[str, Any]) -> str:
                 meta.get("doi", ""),
                 int(meta.get("n_pages", 0) or 0),
                 json.dumps(meta.get("tags", []), ensure_ascii=False),
+                meta.get("reading_lens", "auto"),
                 _now(),
             ),
         )
@@ -372,6 +381,7 @@ def _row_to_paper(r: sqlite3.Row) -> dict:
     d = dict(r)
     d["authors"] = json.loads(d.get("authors") or "[]")
     d["tags"] = json.loads(d.get("tags") or "[]")
+    d["reading_lens"] = d.get("reading_lens") or "auto"
     return d
 
 
@@ -388,7 +398,10 @@ def list_papers() -> list[dict]:
 
 
 def update_paper(paper_id: str, fields: dict[str, Any]) -> None:
-    allowed = {"title", "authors", "year", "abstract", "tags", "doi", "arxiv_id"}
+    allowed = {
+        "title", "authors", "year", "abstract", "tags", "doi", "arxiv_id",
+        "reading_lens",
+    }
     sets, vals = [], []
     for k, v in fields.items():
         if k not in allowed:

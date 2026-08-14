@@ -1,6 +1,6 @@
 {
   "name": "gloss-local",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A local, self-hosted AI companion for reading and annotating research papers.",
   "type": "module",
   "bin": {

@@ -6,6 +6,7 @@ import { SidePanel } from "./components/SidePanel";
 import { Logo } from "./components/Logo";
 import { ProviderSwitcher } from "./components/ProviderSwitcher";
 import { ExitConfirmDialog } from "./components/ExitConfirmDialog";
+import { DoctorDialog } from "./components/DoctorDialog";
 import { PdfViewer } from "./pdf/PdfViewer";
 import { startImportJobPolling } from "./importQueue.mjs";
 
@@ -36,6 +37,7 @@ export default function App() {
   const [outlineCollapsed, setOutlineCollapsed] = useState(
     () => localStorage.getItem("gloss.outlineCollapsed") === "1"
   );
+  const [doctorOpen, setDoctorOpen] = useState(false);
 
   useEffect(() => {
     // apply the saved theme + PDF night mode on load (controls live in Settings)
@@ -115,6 +117,13 @@ export default function App() {
           </div>
         )}
         <div className="spacer" />
+        <button
+          className="doctor-launch"
+          title={uiLang === "zh" ? "环境与自检" : "Environment and self-check"}
+          onClick={() => setDoctorOpen(true)}
+        >
+          <span>＋</span>{uiLang === "zh" ? "环境自检" : "Doctor"}
+        </button>
         <ProviderSwitcher />
       </header>
 
@@ -143,6 +152,7 @@ export default function App() {
       )}
 
       {toast && <div className="toast">{toast}</div>}
+      <DoctorDialog open={doctorOpen} onClose={() => setDoctorOpen(false)} />
       <ExitConfirmDialog />
     </div>
   );

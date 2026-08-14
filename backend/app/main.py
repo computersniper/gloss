@@ -18,12 +18,14 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from .library import store
 from .library.import_jobs import ImportJobManager
+from .plugins import manager as plugin_manager
 from .providers import registry
 from .tasks import AITaskManager
 from .routers import (
     ai,
     annotations,
     citations,
+    doctor,
     papers,
     plugins,
     scholar,
@@ -38,6 +40,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store.init_db()
+    upgraded_plugins = plugin_manager.upgrade_installed_marketplace_plugins()
+    if upgraded_plugins:
+        logger.info("Upgraded installed plugins: %s", ", ".join(upgraded_plugins))
     app.state.import_jobs = ImportJobManager(
         download_timeout=papers.IMPORT_DOWNLOAD_TIMEOUT,
         parse_timeout=papers.IMPORT_PARSE_TIMEOUT,
@@ -57,7 +62,7 @@ async def lifespan(app: FastAPI):
             logger.error("Timed out while shutting down the paper import queue")
 
 
-app = FastAPI(title="Gloss-Local", version="1.0.2", lifespan=lifespan)
+app = FastAPI(title="Gloss-Local", version="1.0.3", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -81,6 +86,7 @@ async def health():
 app.include_router(papers.router)
 app.include_router(ai.router)
 app.include_router(citations.router)
+app.include_router(doctor.router)
 app.include_router(scholar.router)
 app.include_router(annotations.router)
 app.include_router(plugins.router)

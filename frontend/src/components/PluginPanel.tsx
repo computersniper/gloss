@@ -17,7 +17,7 @@ export function PluginPanel({ plugin }: { plugin: PluginManifest }) {
   const notify = useStore((s) => s.notify);
   const [uninstalling, setUninstalling] = useState(false);
   const key = current
-    ? `plugin:${plugin.id}:${plugin.version}:${current.id}:${outputLanguage}`
+    ? `plugin:${plugin.id}:${plugin.version}:${current.id}:${current.reading_lens || "auto"}:${outputLanguage}`
     : null;
   const localPreflight = pages ? preflightPluginRequirements(plugin.requirements, pages.pages) : null;
   const { task, running, error, start, restore, cancel, clear } = useAiTask(key);
@@ -32,6 +32,7 @@ export function PluginPanel({ plugin }: { plugin: PluginManifest }) {
   const data = task?.result as PluginRunResponse | undefined;
   const unavailable = localPreflight?.status === "unavailable" ? localPreflight : data?.status === "unavailable" ? data : null;
   const markdown = unavailable ? "" : data?.markdown || "";
+  const research = unavailable ? undefined : data?.research;
   const runPlugin = () => {
     if (unavailable) return;
     if (!current) return;
@@ -124,6 +125,19 @@ export function PluginPanel({ plugin }: { plugin: PluginManifest }) {
           onCancel={running ? () => void cancel() : undefined}
         />
       )}
+      {research && <div className="plugin-research-status" role="status">
+        <strong>
+          {uiLang === "zh"
+            ? `🌐 已联网研究 · ${research.queries.length} 个检索式 · ${research.source_count} 个来源`
+            : `🌐 Live research · ${research.queries.length} queries · ${research.source_count} sources`}
+        </strong>
+        <span>{research.providers.join(" · ")}</span>
+        {research.partial && <span className="warning">
+          {uiLang === "zh"
+            ? `部分检索服务失败：${research.failed_providers?.join("、") || "未知服务"}`
+            : `Partial results: ${research.failed_providers?.join(", ") || "a search service failed"}`}
+        </span>}
+      </div>}
       {markdown && <Markdown text={markdown} />}
     </div>
   );

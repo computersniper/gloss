@@ -1,8 +1,9 @@
 """Safe, manifest-driven plugin installation and execution.
 
 Gloss plugins are declarative paper-analysis modules. They may read the current
-paper and request an AI completion when those permissions are declared, but they
-do not execute downloaded Python or JavaScript inside the desktop application.
+paper, request an AI completion, and use host-controlled scholarly search when
+those permissions are declared, but they do not execute downloaded Python or
+JavaScript inside the desktop application.
 """
 from __future__ import annotations
 
@@ -14,12 +15,18 @@ from typing import Any
 
 from ..config import PLUGINS_DIR, output_language
 from ..features.common import text_complete, truncate_to_tokens
+from ..features.reading_lens import (
+    cache_revision,
+    guidance_for,
+    resolve_paper_lens,
+)
 from ..library import store
 from ..platform_support import read_utf8_text
+from ..search import deep_research
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?$")
-_ALLOWED_PERMISSIONS = {"paper:read", "ai:complete"}
+_ALLOWED_PERMISSIONS = {"paper:read", "ai:complete", "network:research"}
 _REQUIREMENT_DEFINITIONS = {
     "body_text": {"reason": "no_body_text"},
     "formulas": {"reason": "no_formulas"},
@@ -30,7 +37,7 @@ _REQUIREMENT_DEFINITIONS = {
 }
 _ALLOWED_REQUIREMENTS = set(_REQUIREMENT_DEFINITIONS)
 _AGENT_MESSAGE_STAGES = {
-    "default", "preparing", "reading", "thinking", "writing", "saving",
+    "default", "preparing", "reading", "searching", "thinking", "writing", "saving",
 }
 DEFAULT_AGENT = {
     "name": "Research Assistant",
@@ -40,6 +47,7 @@ DEFAULT_AGENT = {
         "default": "Researching the paper",
         "preparing": "Preparing the paper",
         "reading": "Reading the paper",
+        "searching": "Searching scholarly sources",
         "thinking": "Analyzing the evidence",
         "writing": "Writing the result",
         "saving": "Saving the result",
@@ -229,6 +237,106 @@ CORE_EXTENSIONS = [
 ]
 
 MARKETPLACE = [
+    {
+        "id": "gloss.deep-research",
+        "name": "Deep Research",
+        "name_zh": "深度研究",
+        "version": "1.1.0",
+        "author": "Gloss",
+        "icon": "DR",
+        "description": (
+            "Search live scholarly sources and build a traceable, evidence-grounded report."
+        ),
+        "description_zh": "联网检索学术来源，并基于论文全文生成可追溯的深度研究报告。",
+        "tab_name": "Research",
+        "tab_name_zh": "深度研究",
+        "permissions": ["paper:read", "ai:complete", "network:research"],
+        "requirements": ["body_text"],
+        "agent": {
+            "name": "Deep Researcher",
+            "name_zh": "深度研究员",
+            "icon": "DR",
+            "messages": {
+                "reading": "Reading the paper",
+                "searching": "Searching Semantic Scholar, OpenAlex, and citation links",
+                "thinking": "Comparing the paper with retrieved evidence",
+                "writing": "Writing the result",
+            },
+        },
+        "contributes": {
+            "paper_sidebar": {
+                "tab_name": "Research",
+                "tab_name_zh": "深度研究",
+                "icon": "DR",
+            },
+            "configuration": {
+                "title": "Deep Research",
+                "properties": {
+                    "focus": {
+                        "type": "string",
+                        "enum": [
+                            "comprehensive",
+                            "methods",
+                            "evidence",
+                            "reproduction",
+                        ],
+                        "enumItemLabels": [
+                            "Comprehensive",
+                            "Methods",
+                            "Evidence",
+                            "Reproduction",
+                        ],
+                        "default": "comprehensive",
+                        "description": "The primary lens for the research report.",
+                        "order": 10,
+                    },
+                    "depth": {
+                        "type": "string",
+                        "enum": ["standard", "exhaustive"],
+                        "enumItemLabels": ["Standard", "Exhaustive"],
+                        "default": "exhaustive",
+                        "description": "Controls the level of detail in the report.",
+                        "order": 20,
+                    },
+                    "includeResearchAgenda": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Include prioritized follow-up research questions.",
+                        "order": 30,
+                    },
+                    "citePaperLocations": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": (
+                            "Reference sections, figures, tables, and reported values when available."
+                        ),
+                        "order": 40,
+                    },
+                },
+            },
+        },
+        "prompt": (
+            "Produce a rigorous deep-research report about the supplied paper using both the "
+            "paper and the host-provided VERIFIED NETWORK RESEARCH bundle. The bundle contains "
+            "live results from scholarly indexes and citation links, each identified as [S1], "
+            "[S2], and so on. Never invent citations, URLs, related works, experiments, numbers, "
+            "or author intent. Cite every external comparison with its exact [S#] identifier, "
+            "and never cite an external source absent from the bundle. Distinguish (1) facts "
+            "reported by the paper, (2) claims made by its authors, (3) facts or positions from "
+            "retrieved sources, and (4) your reasoned synthesis. Conflicting sources must be "
+            "shown as disagreement, not silently reconciled.\n\n"
+            "Adapt the report structure to the paper's reading lens. Cover an executive "
+            "synthesis; research context and lineage; the central question or thesis; approach, "
+            "materials, evidence, or methods; a claim-to-evidence analysis; what retrieved work "
+            "supports, complicates, or contradicts; novelty in context; assumptions and validity "
+            "risks; limitations and missing evidence; and implications. Do not force datasets, "
+            "experiments, formulas, or metrics onto humanities or qualitative work. When plugin "
+            "settings request a research agenda, end with prioritized follow-up questions. When "
+            "location citations are requested, cite only identifiable paper locations. Finish "
+            "with a Sources table listing every cited [S#], title, year, database, and exact URL. "
+            "Mark unavailable information as not reported or not found rather than guessing."
+        ),
+    },
     {
         "id": "gloss.critical-review",
         "name": "Critical Review",
@@ -949,6 +1057,28 @@ def install_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     return manifest
 
 
+def _semver_tuple(version: str) -> tuple[int, int, int]:
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version or "")
+    return tuple(int(part) for part in match.groups()) if match else (0, 0, 0)
+
+
+def upgrade_installed_marketplace_plugins() -> list[str]:
+    """Upgrade installed first-party manifests without touching custom plugins."""
+    marketplace = {item["id"]: item for item in MARKETPLACE}
+    upgraded: list[str] = []
+    for installed in list_installed():
+        source = marketplace.get(installed["id"])
+        if not source or installed.get("author") != "Gloss":
+            continue
+        if _semver_tuple(str(source["version"])) <= _semver_tuple(str(installed["version"])):
+            continue
+        manifest = validate_manifest(source)
+        _write_manifest(manifest)
+        store.cache_delete_prefix(f"plugin:{manifest['id']}:")
+        upgraded.append(manifest["id"])
+    return upgraded
+
+
 def uninstall(plugin_id: str) -> None:
     path = _manifest_path(plugin_id)
     if not path.exists():
@@ -965,6 +1095,7 @@ def _plugin_cache_key(
     manifest: dict[str, Any],
     language: str,
     configuration: dict[str, Any] | None,
+    lens_revision: str = "reading-lens-v1:auto:general",
 ) -> tuple[str, dict[str, Any]]:
     prompt_revision = hashlib.sha256(
         manifest["prompt"].encode("utf-8")
@@ -975,11 +1106,27 @@ def _plugin_cache_key(
             resolved_configuration, sort_keys=True, ensure_ascii=False,
         ).encode("utf-8")
     ).hexdigest()[:12]
+    network_revision = (
+        deep_research.NETWORK_RESEARCH_REVISION
+        if "network:research" in manifest["permissions"]
+        else "local"
+    )
     return (
         f"plugin:{manifest['id']}:{manifest['version']}:{prompt_revision}:"
-        f"{settings_revision}:{language}",
+        f"{settings_revision}:{language}:{lens_revision}:{network_revision}",
         resolved_configuration,
     )
+
+
+def _cached_plugin_response(cached: Any) -> dict[str, Any]:
+    if isinstance(cached, dict) and isinstance(cached.get("markdown"), str):
+        return {
+            "status": "ready",
+            "reason": None,
+            "markdown": cached["markdown"],
+            "research": cached.get("research"),
+        }
+    return {"status": "ready", "reason": None, "markdown": cached}
 
 
 def get_cached_result(
@@ -994,11 +1141,17 @@ def get_cached_result(
     if not manifest:
         raise ValueError("plugin is not installed")
     lang = language or output_language()
-    cache_key, _ = _plugin_cache_key(manifest, lang, configuration)
+    parsed = store.load_parsed(paper_id)
+    if not parsed:
+        raise ValueError("paper not parsed")
+    resolution = resolve_paper_lens(paper_id, parsed.get("full_text", ""))
+    cache_key, _ = _plugin_cache_key(
+        manifest, lang, configuration, cache_revision(resolution)
+    )
     cached = store.cache_get(paper_id, cache_key)
     if cached is None:
         return None
-    return {"status": "ready", "reason": None, "markdown": cached}
+    return _cached_plugin_response(cached)
 
 
 async def run_plugin(
@@ -1015,12 +1168,13 @@ async def run_plugin(
     if not manifest:
         raise ValueError("plugin is not installed")
     lang = language or output_language()
-    cache_key, resolved_configuration = _plugin_cache_key(
-        manifest, lang, configuration,
-    )
     parsed = store.load_parsed(paper_id)
     if not parsed:
         raise ValueError("paper not parsed")
+    resolution = resolve_paper_lens(paper_id, parsed.get("full_text", ""))
+    cache_key, resolved_configuration = _plugin_cache_key(
+        manifest, lang, configuration, cache_revision(resolution)
+    )
     unavailable = _preflight_failure(manifest, parsed)
     if unavailable:
         return {"status": "unavailable", "reason": unavailable, "markdown": ""}
@@ -1028,7 +1182,14 @@ async def run_plugin(
     if not refresh:
         cached = store.cache_get(paper_id, cache_key)
         if cached is not None:
-            return {"status": "ready", "reason": None, "markdown": cached}
+            return _cached_plugin_response(cached)
+
+    research_evidence = None
+    if "network:research" in manifest["permissions"]:
+        research_evidence = await deep_research.collect_external_evidence(
+            paper_id,
+            depth=str(resolved_configuration.get("depth") or "exhaustive"),
+        )
     paper_text = truncate_to_tokens(parsed.get("full_text", ""), 60000)
     instructions = manifest["prompt"].replace("{{language}}", lang)
     settings_block = ""
@@ -1039,15 +1200,34 @@ async def run_plugin(
         )
     system = (
         f"You are running the Gloss plugin '{manifest['name']}' version "
-        f"{manifest['version']}. Follow its instructions faithfully, use only the "
-        f"provided paper, and write entirely in {lang}. Return Markdown."
+        f"{manifest['version']}. Follow its instructions faithfully and write entirely "
+        f"in {lang}. Use only the provided paper and, when present, the host-retrieved "
+        f"VERIFIED NETWORK RESEARCH bundle. Never cite an external source outside that "
+        f"bundle. Return Markdown. "
+        f"{guidance_for(resolution)}"
     )
+    research_block = ""
+    if research_evidence is not None:
+        research_block = (
+            "\n\n=== VERIFIED NETWORK RESEARCH ===\n"
+            + deep_research.prompt_bundle(research_evidence)
+        )
     user = (
         f"=== PLUGIN INSTRUCTIONS ===\n{instructions}{settings_block}"
+        f"{research_block}"
         f"\n\n=== PAPER ===\n{paper_text}"
     )
     result = await text_complete(system, user, provider=provider, model=model)
     if not get_installed(plugin_id):
         raise ValueError("plugin was uninstalled while the task was running")
-    store.cache_set(paper_id, cache_key, result)
-    return {"status": "ready", "reason": None, "markdown": result}
+    response = {"status": "ready", "reason": None, "markdown": result}
+    if research_evidence is not None:
+        response["research"] = deep_research.public_metadata(research_evidence)
+        store.cache_set(
+            paper_id,
+            cache_key,
+            {"markdown": result, "research": response["research"]},
+        )
+    else:
+        store.cache_set(paper_id, cache_key, result)
+    return response

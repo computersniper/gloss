@@ -5,6 +5,7 @@ from ..config import output_language
 from ..library import store
 from ..pdf import ingest
 from .common import json_complete, truncate_to_tokens
+from .reading_lens import cache_revision, guidance_for, resolve_paper_lens
 
 CATEGORY_COLORS = {
     "contribution": "#a5d6a7",   # green
@@ -36,10 +37,15 @@ async def auto_highlight(
     if not parsed:
         raise ValueError("paper not parsed")
     text = truncate_to_tokens(parsed["full_text"], 60000)
+    resolution = resolve_paper_lens(paper_id, parsed["full_text"])
     user = (
         f"Select up to {max_items} key sentences (verbatim, in the paper's original "
         f"language so they can be located) with categories. Write each 'why' note in "
-        f"{output_language()}.\n\n=== PAPER ===\n{text}"
+        f"{output_language()}.\n\n=== READING LENS ===\n"
+        f"{guidance_for(resolution)} For humanities work, prioritize thesis statements, "
+        f"source or textual evidence, interpretive turns, counter-readings, and limits; "
+        f"map interpretive approach to 'method' and supported interpretations to 'result'."
+        f"\n\n=== PAPER ===\n{text}"
     )
     result = await json_complete(SYSTEM, user, SHAPE, provider=provider, model=model)
     items = result.get("items", [])[:max_items]
@@ -65,5 +71,5 @@ async def auto_highlight(
             "kind": "auto",
         })
         saved.append(h)
-    store.cache_set(paper_id, "autohighlight_done", True)
+    store.cache_set(paper_id, "autohighlight_done", cache_revision(resolution))
     return saved

@@ -2,6 +2,8 @@
 
 import { fetchWithTimeout } from "./fetchWithTimeout.mjs";
 
+export type ReadingLens = "auto" | "humanities" | "social_sciences" | "stem";
+
 export interface Paper {
   id: string;
   title: string;
@@ -13,6 +15,7 @@ export interface Paper {
   doi: string;
   n_pages: number;
   tags: string[];
+  reading_lens: ReadingLens;
   added_at: number;
 }
 export interface Chat {
@@ -171,6 +174,14 @@ export interface PluginRunResponse {
   status: "ready" | "unavailable";
   markdown: string;
   reason: { code: string; requirement: string } | null;
+  research?: {
+    searched_at: string;
+    queries: string[];
+    providers: string[];
+    source_count: number;
+    partial?: boolean;
+    failed_providers?: string[];
+  };
 }
 export interface CoreExtension {
   id: string;
@@ -284,6 +295,26 @@ export interface ProviderTestResult {
   reply?: string;
   error?: string;
 }
+export type DoctorStatus = "pass" | "warning" | "fail";
+export interface DoctorReport {
+  status: DoctorStatus;
+  checked_at: number;
+  version: string;
+  summary: { passed: number; warnings: number; failed: number };
+  system: {
+    platform: string;
+    python: string;
+    pid: number;
+    packaged: boolean;
+    data_dir: string;
+    cache_dir: string;
+    frontend_dist: string;
+    active_provider: string;
+    paper_count: number;
+    plugin_count: number;
+  };
+  checks: Array<{ id: string; status: DoctorStatus; detail: string }>;
+}
 export interface AiUsageAggregate {
   tasks: number;
   prompt_tokens: number;
@@ -358,9 +389,17 @@ async function j<T>(r: Response): Promise<T> {
 
 export const api = {
   health: () => fetch("/api/health").then((r) => j<any>(r)),
+  runDoctor: () =>
+    fetch("/api/doctor", { method: "POST" }).then((r) => j<DoctorReport>(r)),
 
   listPapers: () => fetch("/api/papers").then((r) => j<{ papers: Paper[] }>(r)),
   getPaper: (id: string) => fetch(`/api/papers/${id}`).then((r) => j<Paper>(r)),
+  updatePaper: (id: string, fields: Partial<Pick<Paper, "title" | "tags" | "year" | "reading_lens">>) =>
+    fetch(`/api/papers/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(fields),
+    }).then((r) => j<Paper>(r)),
   deletePaper: (id: string) =>
     fetch(`/api/papers/${id}`, { method: "DELETE" }).then((r) => j<any>(r)),
   uploadPaper: (file: File) => {

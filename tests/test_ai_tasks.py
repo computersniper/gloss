@@ -71,7 +71,9 @@ def test_cached_artifact_endpoint_reads_local_summary_without_ai(
     client, paper_id, monkeypatch
 ) -> None:
     expected = {"tldr": "Saved locally"}
-    store.cache_set(paper_id, "summary:English", expected)
+    from app.features.reading_lens import cache_key_for_paper
+
+    store.cache_set(paper_id, cache_key_for_paper(paper_id, "summary:English"), expected)
 
     async def must_not_run(*_args, **_kwargs):
         raise AssertionError("artifact lookup must not contact AI")
@@ -143,6 +145,50 @@ def test_plugin_result_restores_locally_and_uninstall_deletes_it(
             plugins.validate_manifest(manifest), "English", {},
         )[0],
     ) is None
+
+
+def test_network_research_plugin_reports_searching_stage(
+    client, paper_id, monkeypatch
+) -> None:
+    plugin_id = "example.network-stage"
+    manifest = {
+        "id": plugin_id,
+        "api_version": 1,
+        "name": "Network Stage",
+        "version": "1.0.0",
+        "author": "Test",
+        "description": "Exposes network research progress.",
+        "permissions": ["paper:read", "ai:complete", "network:research"],
+        "prompt": "Research verified sources.",
+    }
+    assert client.post(
+        "/api/plugins/install", json={"manifest": manifest}
+    ).status_code == 200
+
+    async def delayed_result(*_args, **_kwargs):
+        await asyncio.sleep(0.2)
+        return {"status": "ready", "reason": None, "markdown": "Done"}
+
+    monkeypatch.setattr(task_module.plugin_manager, "run_plugin", delayed_result)
+    try:
+        task_id = client.post(
+            "/api/tasks",
+            json={"feature_id": f"plugin:{plugin_id}", "paper_id": paper_id},
+        ).json()["id"]
+        deadline = time.monotonic() + 2
+        observed = None
+        while time.monotonic() < deadline:
+            observed = client.get(f"/api/tasks/{task_id}").json()
+            if observed["stage"] == "searching":
+                break
+            time.sleep(0.01)
+
+        assert observed is not None
+        assert observed["stage"] == "searching"
+        assert observed["detail"]
+        assert _wait_for_terminal(client, task_id)["status"] == "completed"
+    finally:
+        client.delete(f"/api/plugins/{plugin_id}")
 
 
 def test_task_cancel_propagates_to_running_feature(

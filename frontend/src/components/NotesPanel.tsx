@@ -22,7 +22,9 @@ export function NotesPanel() {
         copy: "⧉ Copy",
         download: "⬇ Download .md",
       };
-  const key = current ? `notes:${current.id}:${outputLanguage}` : null;
+  const key = current
+    ? `notes:${current.id}:${current.reading_lens || "auto"}:${outputLanguage}`
+    : null;
   const { task, running, error, start, restore, cancel } = useAiTask(key);
   useEffect(() => {
     if (!current) return;

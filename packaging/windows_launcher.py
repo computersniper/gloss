@@ -17,7 +17,7 @@ from typing import Any
 
 
 APP_NAME = "Gloss"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 STARTUP_TIMEOUT_SECONDS = 30
 MIN_FALLBACK_PORT = 1024
 EXIT_REQUEST_EVENT = "gloss:close-request"

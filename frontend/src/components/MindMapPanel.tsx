@@ -38,6 +38,8 @@ const KIND_COLOR: Record<string, string> = {
   root: "#a78bfa", problem: "#ef9a9a", method: "#90caf9", result: "#ffd54f",
   concept: "#ce93d8", contribution: "#a5d6a7", background: "#ffcc80",
   experiment: "#80deea", limitation: "#ef6b6b", data: "#b0bec5",
+  context: "#ffb74d", source: "#81c784", theory: "#ba68c8", argument: "#64b5f6",
+  interpretation: "#4dd0e1", evidence: "#aed581",
 };
 function colorForKind(kind: string | undefined, depth: number): string {
   if (kind && KIND_COLOR[kind]) return KIND_COLOR[kind];
@@ -357,7 +359,9 @@ export function MindMapPanel() {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const outputLanguage = useStore((state) => state.outputLanguage);
 
-  const mmKey = current ? `mindmap:${current.id}:${outputLanguage}` : null;
+  const mmKey = current
+    ? `mindmap:${current.id}:${current.reading_lens || "auto"}:${outputLanguage}`
+    : null;
   const { task, running, error: err, start, restore, cancel } = useAiTask(mmKey);
   useEffect(() => {
     if (!current) return;

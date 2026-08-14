@@ -35,6 +35,40 @@ def test_patch_updates_title(client, paper_id):
     assert client.get(f"/api/papers/{paper_id}").json()["title"] == "Renamed Paper"
 
 
+def test_patch_updates_and_persists_direction_tags(client, paper_id):
+    tags = ["Reinforcement Learning", "Robotics"]
+    r = client.patch(f"/api/papers/{paper_id}", json={"tags": tags})
+    assert r.status_code == 200
+    assert r.json()["tags"] == tags
+
+    listed = client.get("/api/papers").json()["papers"]
+    paper = next(item for item in listed if item["id"] == paper_id)
+    assert paper["tags"] == tags
+
+
+def test_patch_updates_and_persists_reading_lens(client, paper_id):
+    original = client.get(f"/api/papers/{paper_id}").json()
+    assert original["reading_lens"] == "auto"
+
+    response = client.patch(
+        f"/api/papers/{paper_id}", json={"reading_lens": "humanities"}
+    )
+    assert response.status_code == 200
+    assert response.json()["reading_lens"] == "humanities"
+
+    listed = client.get("/api/papers").json()["papers"]
+    paper = next(item for item in listed if item["id"] == paper_id)
+    assert paper["reading_lens"] == "humanities"
+
+
+def test_patch_rejects_invalid_reading_lens(client, paper_id):
+    response = client.patch(
+        f"/api/papers/{paper_id}", json={"reading_lens": "economics-ish"}
+    )
+    assert response.status_code == 422
+    assert client.get(f"/api/papers/{paper_id}").json()["reading_lens"] == "auto"
+
+
 def test_delete_removes_paper(client, pdf_bytes):
     pid = client.post(
         "/api/papers/upload",

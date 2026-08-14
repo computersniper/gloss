@@ -50,6 +50,10 @@ interface State {
   settingsFocus: string | null;
 
   loadPapers: () => Promise<void>;
+  updatePaper: (
+    id: string,
+    fields: Partial<Pick<Paper, "title" | "tags" | "year" | "reading_lens">>,
+  ) => Promise<Paper>;
   loadImportJobs: () => Promise<void>;
   enqueueImport: (query: string) => Promise<ImportJob>;
   cancelImport: (id: string) => Promise<void>;
@@ -121,6 +125,14 @@ export const useStore = create<State>((set, get) => ({
       papersAppliedSequence = requestSequence;
       set({ papers });
     }
+  },
+  updatePaper: async (id, fields) => {
+    const paper = await api.updatePaper(id, fields);
+    set((state) => ({
+      papers: state.papers.map((item) => item.id === id ? paper : item),
+      current: state.current?.id === id ? paper : state.current,
+    }));
+    return paper;
   },
   loadImportJobs: () => {
     if (importRefreshInFlight) return importRefreshInFlight;

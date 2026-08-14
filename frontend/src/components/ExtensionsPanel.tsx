@@ -25,7 +25,7 @@ export function ExtensionsPanel() {
         title: "插件市场", installed: "已安装", builtIn: "内置模块", market: "推荐插件", comingSoon: "即将推出",
         install: "安装", uninstall: "卸载", open: "打开", settings: "设置", import: "导入自定义插件",
         developer: "插件 API", feedback: "提交需求", feedbackTitle: "想添加什么插件或功能？", feedbackDetail: "请描述使用场景、预期结果或参考链接", feedbackSend: "发送需求邮件", feedbackHint: "将通过本机默认邮件客户端发往 2651159710@qq.com。", feedbackNeedText: "请填写标题和说明。", apiVersion: "插件 API 版本", copyTemplate: "复制示例 manifest", copied: "已复制", schema: "打开 JSON Schema",
-        safe: "插件采用声明式清单，只能在授权后读取当前论文并调用 AI，不执行任意脚本。",
+        safe: "插件采用声明式清单；声明权限后可读取论文、调用 AI 或使用主机控制的学术检索，但不会执行任意脚本。",
         imported: "插件已安装", uninstalled: "插件已卸载", uninstallConfirm: "卸载后将移除插件入口，并清除该插件生成的缓存内容。确定卸载吗？", failed: "插件操作失败",
       }
     : {
@@ -33,7 +33,7 @@ export function ExtensionsPanel() {
         market: "Featured extensions", install: "Install", uninstall: "Uninstall", open: "Open", settings: "Settings", developer: "Plugin API",
         feedback: "Request an extension", feedbackTitle: "What should Gloss add?", feedbackDetail: "Describe the use case, expected output, or a reference link", feedbackSend: "Send request by email", feedbackHint: "Opens your default mail app addressed to 2651159710@qq.com.", feedbackNeedText: "Please add a title and description.",
         apiVersion: "Plugin API version", copyTemplate: "Copy sample manifest", copied: "Copied", schema: "Open JSON Schema",
-        import: "Import custom plugin", safe: "Plugins use declarative manifests. They can read the current paper and call AI only with declared permissions; arbitrary scripts are not executed.",
+        import: "Import custom plugin", safe: "Plugins use declarative manifests. Declared permissions may read the paper, call AI, or use host-controlled scholarly search; arbitrary scripts are not executed.",
         imported: "Plugin installed", uninstalled: "Plugin uninstalled", uninstallConfirm: "Uninstalling removes the plugin entry and its generated cache. Continue?", failed: "Plugin operation failed",
       };
 

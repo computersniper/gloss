@@ -14,7 +14,9 @@ export function SummaryPanel() {
       ? { run: "生成摘要", regenerate: "↻ 重新生成" }
       : { run: "Generate summary", regenerate: "↻ Regenerate" };
 
-  const key = current ? `summary:${current.id}:${outputLanguage}` : null;
+  const key = current
+    ? `summary:${current.id}:${current.reading_lens || "auto"}:${outputLanguage}`
+    : null;
   const { task, running, error, start, restore, cancel } = useAiTask(key);
   useEffect(() => {
     if (!current) return;
@@ -37,9 +39,23 @@ export function SummaryPanel() {
   };
 
   const zh = uiLang === "zh";
+  const humanities = current?.reading_lens === "humanities";
+  const socialSciences = current?.reading_lens === "social_sciences";
   const L = zh
-    ? { tldr: "速览", problem: "问题", method: "方法", results: "结果", contributions: "创新点", key: "5 分钟速读", limits: "局限" }
-    : { tldr: "TL;DR", problem: "Problem", method: "Method", results: "Results", contributions: "Contributions", key: "5-minute key points", limits: "Limitations" };
+    ? {
+        tldr: "速览",
+        problem: humanities ? "核心论题" : "问题",
+        method: humanities ? "方法与材料" : socialSciences ? "研究方法" : "方法",
+        results: humanities ? "论证与阐释" : socialSciences ? "研究发现" : "结果",
+        contributions: "创新点", key: "5 分钟速读", limits: "局限",
+      }
+    : {
+        tldr: "TL;DR",
+        problem: humanities ? "Central question" : "Problem",
+        method: humanities ? "Approach & sources" : socialSciences ? "Methodology" : "Method",
+        results: humanities ? "Argument & interpretation" : socialSciences ? "Findings" : "Results",
+        contributions: "Contributions", key: "5-minute key points", limits: "Limitations",
+      };
 
   return (
     <div className="panel-body">

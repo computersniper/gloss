@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator
 from .. import config
 from ..features import mindmap as mindmap_feat
 from ..features import notes as notes_feat
+from ..features import reading_lens
 from ..features import summarize as summarize_feat
 from ..library import store
 from ..plugins import manager as plugin_manager
@@ -22,6 +23,7 @@ SUPPORTED_CORE_FEATURES = {"core.summary", "core.notes", "core.mindmap"}
 DEFAULT_MESSAGES = {
     "preparing": "Preparing the research task…",
     "reading": "Reading the paper…",
+    "searching": "Searching scholarly sources…",
     "thinking": "Analyzing the evidence…",
     "writing": "Writing the result…",
     "saving": "Saving the result…",
@@ -30,6 +32,7 @@ DEFAULT_MESSAGES = {
 DEFAULT_MESSAGES_ZH = {
     "preparing": "正在准备研究任务…",
     "reading": "正在阅读论文…",
+    "searching": "正在联网检索学术来源…",
     "thinking": "正在分析证据…",
     "writing": "正在撰写结果…",
     "saving": "正在保存结果…",
@@ -39,6 +42,8 @@ KNOWN_DEFAULT_TRANSLATIONS = {
     **{value: DEFAULT_MESSAGES_ZH[key] for key, value in DEFAULT_MESSAGES.items()},
     "Preparing the paper": DEFAULT_MESSAGES_ZH["preparing"],
     "Reading the paper": DEFAULT_MESSAGES_ZH["reading"],
+    "Searching scholarly sources": DEFAULT_MESSAGES_ZH["searching"],
+    "Searching Semantic Scholar, OpenAlex, and citation links": DEFAULT_MESSAGES_ZH["searching"],
     "Analyzing the evidence": DEFAULT_MESSAGES_ZH["thinking"],
     "Writing the result": DEFAULT_MESSAGES_ZH["writing"],
     "Saving the result": DEFAULT_MESSAGES_ZH["saving"],
@@ -257,12 +262,21 @@ class AITaskManager:
         plugin_id = self.validate(feature_id, paper_id)
         lang = language or config.output_language()
         if feature_id == "core.summary":
-            return store.cache_get(paper_id, f"summary:{lang}")
+            return store.cache_get(
+                paper_id,
+                reading_lens.cache_key_for_paper(paper_id, f"summary:{lang}"),
+            )
         if feature_id == "core.notes":
-            cached = store.cache_get(paper_id, f"notes:{lang}")
+            cached = store.cache_get(
+                paper_id,
+                reading_lens.cache_key_for_paper(paper_id, f"notes:{lang}"),
+            )
             return {"markdown": cached} if cached is not None else None
         if feature_id == "core.mindmap":
-            cached = store.cache_get(paper_id, f"mindmap2:{lang}")
+            cached = store.cache_get(
+                paper_id,
+                reading_lens.cache_key_for_paper(paper_id, f"mindmap2:{lang}"),
+            )
             return {"tree": cached} if cached is not None else None
         settings = config.resolve_feature_settings(feature_id)
         return plugin_manager.get_cached_result(
@@ -491,6 +505,14 @@ class AITaskManager:
                     model=model,
                 )
                 return {"tree": tree}
+            manifest = plugin_manager.get_installed(record.plugin_id) or {}
+            if "network:research" in manifest.get("permissions", []):
+                await self._update(
+                    record,
+                    progress=35,
+                    stage="searching",
+                    detail=self._message(record, "searching"),
+                )
             return await plugin_manager.run_plugin(
                 paper_id,
                 record.plugin_id,
