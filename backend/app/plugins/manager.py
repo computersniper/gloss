@@ -23,10 +23,13 @@ from ..features.reading_lens import (
 from ..library import store
 from ..platform_support import read_utf8_text
 from ..search import deep_research
+from . import visual_explainer
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]{1,63}$")
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][a-zA-Z0-9.-]+)?$")
-_ALLOWED_PERMISSIONS = {"paper:read", "ai:complete", "network:research"}
+_ALLOWED_PERMISSIONS = {
+    "paper:read", "ai:complete", "network:research", "image:generate",
+}
 _REQUIREMENT_DEFINITIONS = {
     "body_text": {"reason": "no_body_text"},
     "formulas": {"reason": "no_formulas"},
@@ -55,8 +58,10 @@ DEFAULT_AGENT = {
 }
 _CONFIG_TYPES = {"boolean", "string", "number", "integer", "array"}
 _CONFIG_SCHEMA_FIELDS = {
-    "type", "default", "description", "markdownDescription", "enum",
+    "type", "default", "title", "title_zh", "description", "description_zh",
+    "markdownDescription", "enum",
     "enumDescriptions", "markdownEnumDescriptions", "enumItemLabels",
+    "enumItemLabels_zh",
     "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems",
     "pattern", "format", "order", "editPresentation", "items",
     "deprecationMessage", "markdownDeprecationMessage", "tags",
@@ -170,7 +175,19 @@ PLUGIN_MANIFEST_SCHEMA = {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        stage: {"type": "string", "maxLength": 100}
+                        stage: {
+                            "oneOf": [
+                                {"type": "string", "maxLength": 100},
+                                {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "en": {"type": "string", "maxLength": 100},
+                                        "zh": {"type": "string", "maxLength": 100},
+                                    },
+                                },
+                            ]
+                        }
                         for stage in sorted(_AGENT_MESSAGE_STAGES)
                     },
                 },
@@ -195,6 +212,7 @@ PLUGIN_MANIFEST_SCHEMA = {
                     "additionalProperties": False,
                     "properties": {
                         "title": {"type": "string", "maxLength": 80},
+                        "title_zh": {"type": "string", "maxLength": 80},
                         "properties": {
                             "type": "object",
                             "additionalProperties": {
@@ -335,6 +353,98 @@ MARKETPLACE = [
             "location citations are requested, cite only identifiable paper locations. Finish "
             "with a Sources table listing every cited [S#], title, year, database, and exact URL. "
             "Mark unavailable information as not reported or not found rather than guessing."
+        ),
+    },
+    {
+        "id": "gloss.visual-explainer",
+        "name": "Visual Explainer",
+        "name_zh": "图像解释",
+        "version": "1.0.0",
+        "author": "Gloss",
+        "icon": "VE",
+        "description": (
+            "Turn a paper into a diagram, a four-frame animated explanation, "
+            "or a teacher-style visual lesson using Codex image_gen or gpt-image-2."
+        ),
+        "description_zh": (
+            "使用 Codex image_gen 或 gpt-image-2 将论文生成示意图、四帧动画式讲解或老师风格的图像课程。"
+        ),
+        "tab_name": "Visual",
+        "tab_name_zh": "图解",
+        "permissions": ["paper:read", "ai:complete", "image:generate"],
+        "requirements": ["body_text"],
+        "agent": {
+            "name": "Visual Teacher",
+            "name_zh": "图解老师",
+            "icon": "VE",
+            "messages": {
+                "reading": {"en": "Reading the paper for visual anchors", "zh": "正在寻找论文中的视觉线索"},
+                "thinking": {"en": "Planning the visual explanation", "zh": "正在规划图像讲解"},
+                "writing": {"en": "Finalizing captions and frames", "zh": "正在整理讲解与分镜"},
+                "saving": {"en": "Saving generated images", "zh": "正在保存生成的图像"},
+            },
+        },
+        "contributes": {
+            "paper_sidebar": {
+                "tab_name": "Visual",
+                "tab_name_zh": "图解",
+                "icon": "VE",
+            },
+            "configuration": {
+                "title": "Visual explanation style",
+                "title_zh": "图像讲解风格",
+                "properties": {
+                    "imageProvider": {
+                        "type": "string",
+                        "title": "Image backend",
+                        "title_zh": "生图后端",
+                        "enum": ["auto", "codex", "openai"],
+                        "enumItemLabels": [
+                            "Auto (prefer Codex)", "Codex image_gen", "OpenAI gpt-image-2",
+                        ],
+                        "enumItemLabels_zh": [
+                            "自动（优先 Codex）", "Codex image_gen（无需 API Key）", "OpenAI gpt-image-2",
+                        ],
+                        "default": "auto",
+                        "description": (
+                            "Auto uses Codex subscription image generation when the Codex CLI is available. "
+                            "OpenAI is an explicit API-key-backed option."
+                        ),
+                        "description_zh": (
+                            "自动模式在 Codex CLI 可用时使用订阅内置生图；OpenAI 是需配置 API Key 的显式选项。"
+                        ),
+                        "order": 5,
+                    },
+                    "style": {
+                        "type": "string",
+                        "title": "Style",
+                        "title_zh": "风格",
+                        "enum": ["diagram", "animated", "teacher"],
+                        "enumItemLabels": ["Diagram", "Animated explanation", "Teacher lesson"],
+                        "enumItemLabels_zh": ["示意图", "动画式讲解", "老师风格讲解"],
+                        "default": "diagram",
+                        "description": "Choose one image, four sequential frames, or a teacher-led scene.",
+                        "description_zh": "选择单张示意图、四张连续分镜或老师讲解场景。",
+                        "order": 10,
+                    },
+                    "quality": {
+                        "type": "string",
+                        "title": "Image quality",
+                        "title_zh": "图像质量",
+                        "enum": ["low", "medium", "high"],
+                        "enumItemLabels": ["Low", "Medium", "High"],
+                        "enumItemLabels_zh": ["低", "中", "高"],
+                        "default": "medium",
+                        "description": "Higher quality can take longer and cost more.",
+                        "description_zh": "更高质量通常耗时更长、费用更高。",
+                        "order": 20,
+                    },
+                },
+            },
+        },
+        "prompt": (
+            "Create a paper-grounded visual explanation. Use the selected style and quality. "
+            "Never invent facts, results, sources, quotations, or author intent."
         ),
     },
     {
@@ -639,9 +749,25 @@ def _normalize_agent(raw: Any) -> dict[str, Any]:
         )
     normalized_messages = dict(DEFAULT_AGENT["messages"])
     for stage, message in messages.items():
-        normalized_messages[stage] = _clean_text(
-            message, f"agent.messages.{stage}", maximum=100,
-        )
+        if isinstance(message, dict):
+            unsupported_languages = set(message) - {"en", "zh"}
+            if unsupported_languages:
+                raise ValueError(
+                    f"unsupported languages for agent.messages.{stage}: "
+                    + ", ".join(sorted(unsupported_languages))
+                )
+            localized = {
+                key: _clean_text(value, f"agent.messages.{stage}.{key}", maximum=100)
+                for key, value in message.items()
+                if value is not None
+            }
+            if not localized:
+                raise ValueError(f"agent.messages.{stage} requires en or zh text")
+            normalized_messages[stage] = localized
+        else:
+            normalized_messages[stage] = _clean_text(
+                message, f"agent.messages.{stage}", maximum=100,
+            )
     return {
         "name": _clean_text(
             raw.get("name") or DEFAULT_AGENT["name"], "agent.name", maximum=40,
@@ -663,7 +789,7 @@ def _normalize_configuration(plugin_id: str, raw: Any) -> dict[str, Any]:
         return {"title": "", "properties": {}}
     if not isinstance(raw, dict):
         raise ValueError("plugin contributes.configuration must be an object")
-    unsupported = set(raw) - {"title", "properties"}
+    unsupported = set(raw) - {"title", "title_zh", "properties"}
     if unsupported:
         raise ValueError(
             "unsupported plugin configuration fields: " + ", ".join(sorted(unsupported))
@@ -778,6 +904,7 @@ def _normalize_configuration(plugin_id: str, raw: Any) -> dict[str, Any]:
                 raise ValueError(f"plugin configuration {key} enum contains an invalid value")
             for descriptions_key in (
                 "enumDescriptions", "markdownEnumDescriptions", "enumItemLabels",
+                "enumItemLabels_zh",
             ):
                 descriptions = schema.get(descriptions_key)
                 if descriptions is not None and (
@@ -798,6 +925,10 @@ def _normalize_configuration(plugin_id: str, raw: Any) -> dict[str, Any]:
     return {
         "title": _clean_text(
             raw.get("title"), "contributes.configuration.title",
+            maximum=80, required=False,
+        ),
+        "title_zh": _clean_text(
+            raw.get("title_zh"), "contributes.configuration.title_zh",
             maximum=80, required=False,
         ),
         "properties": normalized,
@@ -978,7 +1109,7 @@ def validate_manifest(payload: dict[str, Any]) -> dict[str, Any]:
         "permissions": permissions,
         "requirements": requirements,
         "prompt": _clean_text(payload.get("prompt"), "prompt", maximum=12000),
-        "output": "markdown",
+        "output": "visual" if "image:generate" in permissions else "markdown",
         "builtin": False,
     }
 
@@ -1085,6 +1216,7 @@ def uninstall(plugin_id: str) -> None:
         raise ValueError("plugin is not installed")
     path.unlink()
     store.cache_delete_prefix(f"plugin:{plugin_id}:")
+    visual_explainer.remove_plugin_assets(plugin_id)
     try:
         path.parent.rmdir()
     except OSError:
@@ -1111,21 +1243,29 @@ def _plugin_cache_key(
         if "network:research" in manifest["permissions"]
         else "local"
     )
+    image_revision = (
+        visual_explainer.IMAGE_PIPELINE_REVISION
+        if "image:generate" in manifest["permissions"]
+        else "text"
+    )
     return (
         f"plugin:{manifest['id']}:{manifest['version']}:{prompt_revision}:"
-        f"{settings_revision}:{language}:{lens_revision}:{network_revision}",
+        f"{settings_revision}:{language}:{lens_revision}:{network_revision}:{image_revision}",
         resolved_configuration,
     )
 
 
 def _cached_plugin_response(cached: Any) -> dict[str, Any]:
     if isinstance(cached, dict) and isinstance(cached.get("markdown"), str):
-        return {
+        response = {
             "status": "ready",
             "reason": None,
             "markdown": cached["markdown"],
             "research": cached.get("research"),
         }
+        if cached.get("visual_explanation") is not None:
+            response["visual_explanation"] = cached["visual_explanation"]
+        return response
     return {"status": "ready", "reason": None, "markdown": cached}
 
 
@@ -1150,6 +1290,12 @@ def get_cached_result(
     )
     cached = store.cache_get(paper_id, cache_key)
     if cached is None:
+        return None
+    if (
+        isinstance(cached, dict)
+        and cached.get("visual_explanation") is not None
+        and not visual_explainer.assets_available(cached["visual_explanation"])
+    ):
         return None
     return _cached_plugin_response(cached)
 
@@ -1181,8 +1327,41 @@ async def run_plugin(
 
     if not refresh:
         cached = store.cache_get(paper_id, cache_key)
+        if (
+            isinstance(cached, dict)
+            and cached.get("visual_explanation") is not None
+            and not visual_explainer.assets_available(cached["visual_explanation"])
+        ):
+            cached = None
         if cached is not None:
             return _cached_plugin_response(cached)
+
+    paper_text = truncate_to_tokens(parsed.get("full_text", ""), 60000)
+    if "image:generate" in manifest["permissions"]:
+        response = await visual_explainer.run(
+            paper_id=paper_id,
+            plugin_id=plugin_id,
+            paper_text=paper_text,
+            language=lang,
+            style=str(resolved_configuration.get("style") or "diagram"),
+            quality=str(resolved_configuration.get("quality") or "medium"),
+            image_provider=str(resolved_configuration.get("imageProvider") or "auto"),
+            lens_guidance=guidance_for(resolution),
+            cache_revision=cache_key,
+            provider=provider,
+            model=model,
+        )
+        if not get_installed(plugin_id):
+            raise ValueError("plugin was uninstalled while the task was running")
+        store.cache_set(
+            paper_id,
+            cache_key,
+            {
+                "markdown": response["markdown"],
+                "visual_explanation": response["visual_explanation"],
+            },
+        )
+        return response
 
     research_evidence = None
     if "network:research" in manifest["permissions"]:
@@ -1190,7 +1369,6 @@ async def run_plugin(
             paper_id,
             depth=str(resolved_configuration.get("depth") or "exhaustive"),
         )
-    paper_text = truncate_to_tokens(parsed.get("full_text", ""), 60000)
     instructions = manifest["prompt"].replace("{{language}}", lang)
     settings_block = ""
     if resolved_configuration:

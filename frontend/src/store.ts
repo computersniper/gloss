@@ -43,6 +43,7 @@ interface State {
   providers: string[];
   provider: string;
   providerStatuses: Record<string, ProviderConnectionStatus>;
+  featureSettings: Record<string, any>;
   gotoPage: number | null;
   flash: { page: number; rects: [number, number, number, number][]; id: number } | null;
   toast: string | null;
@@ -109,6 +110,7 @@ export const useStore = create<State>((set, get) => ({
   providers: [],
   provider: "local_claude",
   providerStatuses: {},
+  featureSettings: {},
   gotoPage: null,
   flash: null,
   toast: null,
@@ -272,6 +274,7 @@ export const useStore = create<State>((set, get) => ({
         providerStatuses: s.provider_statuses || {},
         targetLanguage: s.config.target_language,
         outputLanguage: s.config.output_language || s.config.target_language,
+        featureSettings: s.config.feature_settings || {},
       });
     } catch {
       /* backend not ready */

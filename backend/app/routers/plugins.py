@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..library import store
@@ -35,6 +36,20 @@ async def plugin_manifest_schema():
 @router.get("/template")
 async def plugin_manifest_template():
     return manager.PLUGIN_TEMPLATE
+
+
+@router.get("/assets/{paper_id}/{plugin_id}/{filename}")
+async def plugin_visual_asset(paper_id: str, plugin_id: str, filename: str):
+    try:
+        path = manager.visual_explainer.resolve_asset_path(paper_id, plugin_id, filename)
+    except ValueError as error:
+        raise HTTPException(404, str(error)) from error
+    media_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".webp": "image/webp",
+    }[path.suffix.lower()]
+    return FileResponse(path, media_type=media_type)
 
 
 @router.post("/install")

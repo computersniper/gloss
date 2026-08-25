@@ -64,7 +64,10 @@ function SchemaField({
       }}>
         {schema.enum.map((option, index) => (
           <option key={String(option)} value={String(option)}>
-            {schema.enumItemLabels?.[index] || schema.enumDescriptions?.[index] || String(option)}
+            {(uiLang === "zh" ? schema.enumItemLabels_zh?.[index] : undefined)
+              || schema.enumItemLabels?.[index]
+              || schema.enumDescriptions?.[index]
+              || String(option)}
           </option>
         ))}
       </select>
@@ -215,7 +218,9 @@ export function FeatureSettingsEditor({ cfg, providers, saving, setCfg, onSave }
           </div>
         </section>
         <section className="feature-specific-settings">
-          <h4>{selected.plugin?.contributes?.configuration?.title || text.custom}</h4>
+          <h4>{(uiLang === "zh"
+            ? selected.plugin?.contributes?.configuration?.title_zh
+            : selected.plugin?.contributes?.configuration?.title) || text.custom}</h4>
           {properties.length ? properties.map(([key, schema]) => (
             <SchemaField
               key={key}

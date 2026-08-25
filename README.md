@@ -78,7 +78,7 @@ workspace. For the interactive product tour, visit the
 | 🌐 **Translate** | **Sentence-level**, **persistently cached**, **reused across page ranges**; translation-only by default with a show-original toggle; **click a sentence to flash-locate it in the PDF**; for arXiv, **translate the exact LaTeX source** so nothing is missed |
 | 📐 **arXiv LaTeX** | A **TeX tab** to read the paper's LaTeX source (exact, no extraction loss) — and translate from it |
 | 🖍️ **Auto-highlight** | The AI picks key sentences by category and **anchors colored highlights onto the PDF** |
-| ✍️ **Annotations** | Personal notes, multi-color highlights, pencil, pen, highlighter and eraser, all saved locally on the page |
+| ✍️ **Annotations** | Personal notes with **Markdown + LaTeX edit/preview**, multi-color highlights, pencil, pen, highlighter and eraser, all saved locally on the page |
 | 📎 **Lasso to chat** | Freehand-circle any PDF region, preview the screenshot, then attach it directly to Chat |
 | 🔗 **References** | Parses the bibliography, enriches via **Crossref / arXiv**, **each entry is clickable** |
 | 🔭 **Scholar** | Find related papers via **Semantic Scholar / arXiv** and **import** them in one click |

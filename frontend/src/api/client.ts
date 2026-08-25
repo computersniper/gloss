@@ -136,6 +136,7 @@ export interface PluginManifest {
     };
     configuration?: {
       title?: string;
+      title_zh?: string;
       properties?: Record<string, PluginConfigurationProperty>;
     };
   };
@@ -143,7 +144,7 @@ export interface PluginManifest {
   permissions: string[];
   requirements: string[];
   prompt: string;
-  output: "markdown";
+  output: "markdown" | "visual";
   builtin: boolean;
   installed?: boolean;
 }
@@ -165,6 +166,7 @@ export interface PluginConfigurationProperty {
   enumDescriptions?: string[];
   markdownEnumDescriptions?: string[];
   enumItemLabels?: string[];
+  enumItemLabels_zh?: string[];
   items?: { type?: string };
   minimum?: number;
   maximum?: number;
@@ -182,6 +184,23 @@ export interface PluginRunResponse {
     partial?: boolean;
     failed_providers?: string[];
   };
+  visual_explanation?: VisualExplanation;
+}
+export interface VisualExplanationImage {
+  url: string;
+  media_type: "image/png" | "image/jpeg" | "image/webp";
+  alt: string;
+  caption: string;
+  heading: string;
+  frame: number;
+}
+export interface VisualExplanation {
+  style: "diagram" | "animated" | "teacher";
+  image_provider: "codex" | "openai";
+  model: "gpt-image-2" | string;
+  quality: "low" | "medium" | "high";
+  frame_count: number;
+  images: VisualExplanationImage[];
 }
 export interface CoreExtension {
   id: string;
@@ -254,6 +273,7 @@ export interface AiArtifactRequest {
   feature_id: string;
   paper_id: string;
   language?: string;
+  input?: Record<string, unknown>;
 }
 export interface AiArtifactResponse {
   found: boolean;
@@ -578,6 +598,10 @@ export const api = {
       paper_id: request.paper_id,
     });
     if (request.language) query.set("language", request.language);
+    const configuration = request.input?.configuration;
+    if (configuration && typeof configuration === "object") {
+      query.set("configuration", JSON.stringify(configuration));
+    }
     return fetch(`/api/tasks/artifact?${query}`).then((r) => j<AiArtifactResponse>(r));
   },
   aiTaskEventsUrl: (id: string) => `/api/tasks/${encodeURIComponent(id)}/events`,

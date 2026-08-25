@@ -257,6 +257,7 @@ class AITaskManager:
         feature_id: str,
         paper_id: str | None,
         language: str | None = None,
+        input: dict[str, Any] | None = None,
     ) -> Any | None:
         """Read a completed local result without starting an AI task."""
         plugin_id = self.validate(feature_id, paper_id)
@@ -278,7 +279,7 @@ class AITaskManager:
                 reading_lens.cache_key_for_paper(paper_id, f"mindmap2:{lang}"),
             )
             return {"tree": cached} if cached is not None else None
-        settings = config.resolve_feature_settings(feature_id)
+        settings = config.resolve_feature_settings(feature_id, input)
         return plugin_manager.get_cached_result(
             paper_id,
             plugin_id,

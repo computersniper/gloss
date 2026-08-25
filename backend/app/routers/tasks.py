@@ -52,20 +52,28 @@ async def get_cached_artifact(
     feature_id: str,
     paper_id: str,
     language: str | None = None,
+    configuration: str | None = None,
 ):
     """Return a saved result only; this endpoint never starts an AI call."""
     try:
+        parsed_configuration: dict[str, Any] = {}
+        if configuration:
+            decoded = json.loads(configuration)
+            if not isinstance(decoded, dict):
+                raise TaskValidationError("configuration must be a JSON object")
+            parsed_configuration = decoded
         result = _manager(request).cached_result(
             feature_id=feature_id,
             paper_id=paper_id,
             language=language,
+            input={"configuration": parsed_configuration},
         )
     except TaskValidationError as error:
         status = 404 if str(error) in {
             "paper not found", "plugin is not installed",
         } else 400
         raise HTTPException(status, str(error)) from error
-    except ValueError as error:
+    except (ValueError, json.JSONDecodeError) as error:
         raise HTTPException(400, str(error)) from error
     return {"found": result is not None, "result": result}
 
