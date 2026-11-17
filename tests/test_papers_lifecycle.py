@@ -91,3 +91,11 @@ def test_upload_non_pdf_is_rejected(client):
     )
     assert r.status_code == 400
     assert "detail" in r.json()
+
+
+def test_upload_damaged_pdf_is_rejected_cleanly(client):
+    before = len(client.get("/api/papers").json()["papers"])
+    damaged = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n" + bytes(range(256)) * 8  # header, no objects
+    r = client.post("/api/papers/upload", files={"file": ("broken.pdf", damaged, "application/pdf")})
+    assert r.status_code == 400 and "unreadable" in r.json()["detail"]
+    assert len(client.get("/api/papers").json()["papers"]) == before  # no half-created paper

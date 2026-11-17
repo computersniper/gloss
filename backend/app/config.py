@@ -1,4 +1,4 @@
-"""Configuration and platform-appropriate on-disk paths for Gloss."""
+"""Configuration and platform-appropriate on-disk paths for GlossX."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .platform_support import default_cache_dir, read_utf8_text, resolve_data_dir
+from .platform_support import default_cache_dir, glossx_home, read_utf8_text, resolve_data_dir
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -31,6 +31,32 @@ PLUGINS_DIR = DATA_DIR / "plugins"
 PLUGIN_OUTPUTS_DIR = DATA_DIR / "plugin_outputs"
 DB_PATH = DATA_DIR / "moonlight.db"
 CONFIG_PATH = DATA_DIR / "config.json"
+# GlossX agent state: project memory and per-run sandbox workspaces for delegates.
+PROJECTS_DIR = DATA_DIR / "projects"
+WORKSPACES_DIR = DATA_DIR / "workspaces"
+# GlossX harness: agent sessions (library data stays in the data directory).
+SESSIONS_DIR = DATA_DIR / "sessions"
+# The user's agent files live in ``~/.glossx`` (``GLOSSX_HOME`` overrides), like
+# Claude Code's ``~/.claude``: GLOSSX.md, settings.json, commands/, agents/, skills/.
+GLOSSX_HOME = glossx_home()
+GLOBAL_INSTRUCTIONS = GLOSSX_HOME / "GLOSSX.md"
+HARNESS_SETTINGS_PATH = GLOSSX_HOME / "settings.json"
+COMMANDS_DIR = GLOSSX_HOME / "commands"
+AGENTS_DIR = GLOSSX_HOME / "agents"
+SKILLS_DIR = GLOSSX_HOME / "skills"
+# Per-workspace agent files: ``<workspace>/.glossx/`` (settings.json, commands/,
+# agents/, memory.json, checkpoints/).
+WORKSPACE_CONFIG_DIRNAME = ".glossx"
+# Where those files lived before ``~/.glossx`` existed. Still read as a fallback
+# and copied (never moved) by ``app.harness.home.migrate``.
+LEGACY_GLOBAL_INSTRUCTIONS = DATA_DIR / "GLOSSX.md"
+LEGACY_COMMANDS_DIR = DATA_DIR / "commands"
+LEGACY_AGENTS_DIR = DATA_DIR / "agents"
+LEGACY_CHECKPOINTS_DIR = DATA_DIR / "checkpoints"
+CHECKPOINTS_DIR = LEGACY_CHECKPOINTS_DIR  # old name, kept for external scripts
+
+APP_NAME = "Gloss"
+APP_VERSION = "2.0.0-beta.1"
 
 for _d in (DATA_DIR, CACHE_DIR, PAPERS_DIR, UPLOADS_DIR, PLUGINS_DIR, PLUGIN_OUTPUTS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
@@ -107,6 +133,8 @@ PORT = int(os.environ.get("GLOSS_PORT", "8010"))
 # Provider / app configuration (persisted)
 # ---------------------------------------------------------------------------
 DEFAULT_CONFIG: dict[str, Any] = {
+    # Empty preserves the built-in location; changes apply to new paper projects.
+    "paper_workspace_root": "",
     # desktop app: warn before closing because in-flight work is interrupted
     "confirm_exit": True,
     # active LLM provider: "local_claude" | "anthropic" | "openai"
@@ -120,6 +148,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "feature_settings": {},
     "providers": {
         "local_claude": {
+            "cli_path": "",  # blank auto-detects local installations
             # short names the claude CLI understands, or full claude model ids
             "model": "sonnet",
             # reasoning effort: "" (CLI default) | low | medium | high | xhigh | max
@@ -127,6 +156,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "timeout": 600,
         },
         "local_codex": {
+            "cli_path": "",  # blank auto-detects; explicit executable/npm shim wins
             # empty model = use codex's own configured default
             "model": "",
             # codex reasoning effort: "" | minimal | low | medium | high

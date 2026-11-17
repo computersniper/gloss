@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../store";
+import { useSessions } from "../sessionStore";
 
 const PROVIDER_META: Record<string, { label: string; kind: "openai" | "anthropic" | "local" }> = {
   local_codex: { label: "Codex", kind: "openai" },
@@ -66,7 +67,7 @@ export function ProviderSwitcher() {
     <div className="provider-switcher" ref={host}>
       <button
         className={"provider-badge" + (open ? " open" : "")}
-        title={uiLang === "zh" ? "切换 AI 提供方" : "Switch AI provider"}
+        title={uiLang === "zh" ? "切换模型渠道（Claude Code、Codex、本地 API…），输入框的模型列表随之切换" : "Switch the model channel (Claude Code, Codex, local API…); the composer's model list follows"}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
@@ -93,7 +94,13 @@ export function ProviderSwitcher() {
                 aria-checked={name === provider}
                 onClick={() => {
                   setOpen(false);
-                  void switchProvider(name);
+                  // the composer's model list follows the channel: the current
+                  // thread (or the next one) moves to it with its default model
+                  void switchProvider(name).then(() => {
+                    if (useStore.getState().provider !== name) return;
+                    const draft = useSessions.getState().draft.model;
+                    if (draft.provider || draft.model || draft.effort) void useSessions.getState().setModel({ provider: null, model: null, effort: null });
+                  });
                 }}
               >
                 <ProviderMark provider={name} />

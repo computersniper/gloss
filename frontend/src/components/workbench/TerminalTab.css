@@ -1,0 +1,17 @@
+.gx-terminal { height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--gx-text); }
+.gx-terminal[hidden] { display: none; }
+.gx-terminal-head { display: flex; gap: 8px; align-items: center; flex-shrink: 0; padding-bottom: 7px; border-bottom: 1px solid var(--gx-line); font-size: 11px; }
+.gx-terminal-head code { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-terminal-head button, .gx-terminal form button { background: transparent; color: var(--gx-text); border: 0; padding: 4px; cursor: pointer; }
+.gx-terminal button:disabled { opacity: .4; cursor: default; }
+.gx-terminal-status.ready { color: var(--gx-accent); }
+.gx-terminal-status.error { color: #db6262; }
+.gx-terminal-output { flex: 1; min-height: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 Consolas, ui-monospace, monospace; margin: 8px 0; }
+.gx-terminal form { display: flex; align-items: center; gap: 8px; flex-shrink: 0; border-top: 1px solid var(--gx-line); padding-top: 7px; }
+.gx-terminal form input { flex: 1; min-width: 0; background: transparent; color: var(--gx-text); border: 0; outline: none; font: 12px Consolas, ui-monospace, monospace; }
+.gx-terminal-tabs { display: flex; gap: 2px; align-items: center; flex-shrink: 0; overflow-x: auto; padding-bottom: 5px; font-size: 11px; }
+.gx-terminal-tab { display: flex; align-items: center; gap: 5px; padding: 2px 4px 2px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; opacity: .7; }
+.gx-terminal-tab:hover, .gx-terminal-tab.on { opacity: 1; background: color-mix(in srgb, var(--gx-text) 8%, transparent); }
+.gx-terminal-tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gx-accent); }
+.gx-terminal-tab.saved .dot { background: transparent; border: 1px solid currentColor; }
+.gx-terminal-tab button, .gx-terminal-new { background: transparent; color: var(--gx-text); border: 0; padding: 2px; cursor: pointer; display: inline-flex; }

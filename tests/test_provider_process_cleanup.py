@@ -65,7 +65,9 @@ def _install_process_mocks(monkeypatch, module, process):
 
     monkeypatch.setattr(module.asyncio, "create_subprocess_exec", create)
     monkeypatch.setattr(module, "terminate_process_tree", terminate)
-    monkeypatch.setattr(module, "resolve_cli_command", lambda _name: ["provider"])
+    async def command():
+        return ["provider"]
+    monkeypatch.setattr(module, "_command", command)
     return terminated
 
 

@@ -1,0 +1,33 @@
+{
+  "api_version": 2,
+  "id": "claim-verification",
+  "kind": "workflow",
+  "name": "Claim Verification",
+  "version": "1.0.0",
+  "author": "GlossX",
+  "description": "Check a scientific claim against the library: find papers and passages for and against it, verify each piece of evidence and give a verdict with span citations.",
+  "permissions": ["library:read", "ai:complete"],
+  "capability": {
+    "card": "Check whether a scientific claim is supported or refuted by the papers: gather evidence for and against, verify it, and give a cited verdict.",
+    "input": {"claim": "string"},
+    "output": {"verdict": "SUPPORTED|REFUTED|MIXED|NOT ENOUGH EVIDENCE", "answer": "markdown", "claims": "claim[] with span_ids"}
+  },
+  "steps": [
+    {"id": "plan", "use": "agent.planner"},
+    {"id": "find", "use": "library.search", "map_over": "plan.queries",
+     "args": {"query": "{{item}}", "k": 6}, "depends_on": ["plan"]},
+    {"id": "screen", "use": "decider.screen", "args": {"max_candidates": 8, "max_accept": 4},
+     "depends_on": ["find"]},
+    {"id": "evidence", "use": "paper.search_spans", "map_over": "plan.queries",
+     "args": {"query": "{{item}}", "paper_ids": "{{screen.accepted.paper_id}}", "k": 6},
+     "depends_on": ["screen"]},
+    {"id": "read", "use": "agent.reader", "map_over": "screen.accepted",
+     "args": {"paper_id": "{{item.paper_id}}", "question": "Evidence for or against this claim: {{goal}}"},
+     "context": "shared_session", "depends_on": ["screen"]},
+    {"id": "verify", "use": "agent.verifier", "depends_on": ["evidence", "read"]},
+    {"id": "write", "use": "agent.writer", "depends_on": ["verify"],
+     "args": {"instructions": "The goal is a claim to check. Start with exactly one line 'Verdict: SUPPORTED', 'Verdict: REFUTED', 'Verdict: MIXED' or 'Verdict: NOT ENOUGH EVIDENCE'. Then list the evidence for and the evidence against, each point cited. Use NOT ENOUGH EVIDENCE whenever the passages do not address the claim; never decide from outside knowledge."}}
+  ],
+  "loop": {"use": "loop:reflexion", "stop": {"coverage": 0.9, "max_rounds": 2, "patience": 1}},
+  "agent": {"name": "Fact Checker", "icon": "⚖️"}
+}

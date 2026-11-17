@@ -16,14 +16,25 @@ permissions:
 
 jobs:
   npm-package:
+    # Packaging and publishing only run on the public Gloss repository.
+    if: github.repository == 'computersniper/gloss'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Check tag matches package version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::The tag must match the package version v$version."
+            exit 1
+          fi
       - name: Build npm tarball
         run: npm pack
       - uses: actions/upload-artifact@v4
@@ -32,6 +43,8 @@ jobs:
           path: gloss-local-*.tgz
 
   source-archive:
+    # Packaging and publishing only run on the public Gloss repository.
+    if: github.repository == 'computersniper/gloss'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +60,8 @@ jobs:
           path: release-assets/*
 
   desktop-package:
+    # Packaging and publishing only run on the public Gloss repository.
+    if: github.repository == 'computersniper/gloss'
     name: Windows ${{ matrix.arch }} desktop package
     strategy:
       fail-fast: false
@@ -61,9 +76,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -92,7 +109,7 @@ jobs:
           path: release-assets/*
 
   github-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.repository == 'computersniper/gloss' && (startsWith(github.ref, 'refs/tags/v'))
     needs: [npm-package, source-archive, desktop-package]
     runs-on: ubuntu-latest
     steps:
@@ -105,15 +122,18 @@ jobs:
         with:
           files: release-assets/*
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
 
   publish-npm:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_npm
+    if: github.repository == 'computersniper/gloss' && (github.event_name == 'workflow_dispatch' && inputs.publish_npm)
     needs: npm-package
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: npm-package
@@ -123,6 +143,16 @@ jobs:
           node-version: "24"
           registry-url: https://registry.npmjs.org
       - name: Publish npm package
-        run: npm publish gloss-local-*.tgz --access public
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if [[ "$GITHUB_REF_TYPE" != tag || "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Select the v$version tag when dispatching npm publishing."
+            exit 1
+          fi
+          dist_tag=latest
+          if [[ "$version" == *-* ]]; then
+            dist_tag=next
+          fi
+          npm publish "gloss-local-$version.tgz" --access public --tag "$dist_tag"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

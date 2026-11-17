@@ -40,7 +40,9 @@ def _install_claude_process(
         calls.append({"args": args, "kwargs": kwargs})
         return Process(args)
 
-    monkeypatch.setattr(local_claude, "resolve_cli_command", lambda _name: ["claude"])
+    async def command():
+        return ["claude"]
+    monkeypatch.setattr(local_claude, "_command", command)
     monkeypatch.setattr(local_claude, "_sandbox_env", lambda: ({}, str(tmp_path)))
     monkeypatch.setattr(local_claude, "_pick_model", lambda _model: "sonnet")
     monkeypatch.setattr(local_claude, "_effort", lambda: "")

@@ -3,6 +3,10 @@ import { pdfjsLib, TextLayer } from "./pdfSetup";
 import { api, type ChatAttachment, type DrawingTool } from "../api/client";
 import { useStore } from "../store";
 import { SelectionPopover } from "../components/SelectionPopover";
+import { getPdfDoc } from "./docCache";
+
+// Per-paper scroll offsets so switching back to a tab lands where you left off.
+const scrollMemo = new Map<string, number>();
 
 const DRAW_COLORS = ["#ef6b6b", "#ffd54f", "#7aa2f7", "#4fb8a0", "#ce93d8"];
 const BRUSHES: Record<DrawingTool, { widths: number[]; defaultWidth: number }> = {
@@ -96,16 +100,20 @@ export function PdfViewer() {
   const addChatAttachment = useStore((s) => s.addChatAttachment);
 
   const [scale, setScale] = useState(1.35);
-  const [rendered, setRendered] = useState(false);
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  const zoomAnchorRef = useRef<{ ratio: number; top: number; left: number; anchorY: number; anchorX: number } | null>(null);
+  const [loaded, setLoaded] = useState<{ id: string; doc: any } | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [retry, setRetry] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const docRef = useRef<any>(null);
   const [popover, setPopover] = useState<{ x: number; y: number } | null>(null);
   const [showHighlights, setShowHighlights] = useState(() => localStorage.getItem("gloss.layer.highlights") !== "0");
   const [showNotes, setShowNotes] = useState(() => localStorage.getItem("gloss.layer.notes") !== "0");
   const [showInk, setShowInk] = useState(() => localStorage.getItem("gloss.layer.ink") !== "0");
   const [dispOpen, setDispOpen] = useState(false);
-  const renderTasksRef = useRef<any[]>([]);
+  const restoreRef = useRef<string | null>(null);
   const [drawTool, setDrawTool] = useState<DrawTool>("select");
   const [brushType, setBrushType] = useState<DrawingTool>(savedBrush);
   const [drawColor, setDrawColor] = useState(DRAW_COLORS[0]);
@@ -120,18 +128,109 @@ export function PdfViewer() {
   useEffect(() => {
     if (!current) return;
     let cancelled = false;
-    setRendered(false);
-    const task = pdfjsLib.getDocument(api.pdfUrl(current.id));
-    task.promise.then((doc: any) => {
+    setLoaded(null);
+    setLoadError("");
+    restoreRef.current = current.id;
+    // documents are owned by the shared cache (evicted when the tab closes)
+    getPdfDoc(current.id).then(async (doc: any) => {
       if (cancelled) return;
-      docRef.current = doc;
-      setRendered(true);
+      // on a touch screen, open at page width when the default would overflow
+      const el = containerRef.current;
+      if (el && window.matchMedia("(pointer: coarse)").matches) {
+        try {
+          const width = (await doc.getPage(1)).getViewport({ scale: 1 }).width;
+          const fit = Math.floor(((el.clientWidth - 32) / width) * 100) / 100;
+          if (!cancelled && fit > 0.3 && fit < 1.35) setScale(Math.max(0.6, fit));
+        } catch { /* keep the default */ }
+      }
+      if (cancelled) return;
+      setLoaded({ id: current.id, doc });
+    }).catch((error) => {
+      if (!cancelled) setLoadError(String(error?.message || error));
     });
+    return () => { cancelled = true; };
+  }, [current?.id, retry]);
+
+  // Ctrl+wheel zooms the PDF (not the app). Pages re-render once the wheel
+  // settles; the scroll position keeps the same spot under the pointer.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let pending: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let wheel = 0;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      let step: number;
+      if (e.deltaMode !== 0 || Math.abs(e.deltaY) >= 50) { wheel = 0; step = Math.sign(e.deltaY); }
+      else { wheel += e.deltaY; if (Math.abs(wheel) < 50) return; step = Math.sign(wheel); wheel = 0; }
+      const base = pending ?? scaleRef.current;
+      pending = Math.round(Math.min(3, Math.max(0.6, base * (step < 0 ? 1.1 : 1 / 1.1))) * 100) / 100;
+      const rect = el.getBoundingClientRect();
+      const anchorY = e.clientY - rect.top;
+      const anchorX = e.clientX - rect.left;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const next = pending!;
+        const ratio = next / scaleRef.current;
+        pending = null;
+        zoomAnchorRef.current = { ratio, top: el.scrollTop + anchorY, left: el.scrollLeft + anchorX, anchorY, anchorX };
+        setScale(next);
+      }, 120);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => { el.removeEventListener("wheel", onWheel); if (timer) clearTimeout(timer); };
+  }, [current?.id]);
+
+  // Two-finger pinch zooms the PDF on a tablet or phone, the touch twin of
+  // Ctrl+wheel: the view stretches while the fingers move, then pages re-render
+  // at the new scale with the pinched spot kept in place.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let start: { dist: number; midX: number; midY: number } | null = null;
+    let ratio = 1;
+    const span = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      const rect = el.getBoundingClientRect();
+      start = {
+        dist: span(e.touches),
+        midX: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left,
+        midY: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top,
+      };
+      ratio = 1;
+      el.style.transformOrigin = `${start.midX + el.scrollLeft}px ${start.midY + el.scrollTop}px`;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!start || e.touches.length !== 2) return;
+      e.preventDefault();
+      const next = Math.min(3, Math.max(0.6, scaleRef.current * (span(e.touches) / start.dist)));
+      ratio = next / scaleRef.current;
+      el.style.transform = `scale(${ratio})`;
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!start || e.touches.length >= 2) return;
+      const { midX, midY } = start;
+      start = null;
+      el.style.transform = "";
+      el.style.transformOrigin = "";
+      if (Math.abs(ratio - 1) < 0.03) return;
+      const next = Math.round(scaleRef.current * ratio * 100) / 100;
+      zoomAnchorRef.current = { ratio: next / scaleRef.current, top: el.scrollTop + midY, left: el.scrollLeft + midX, anchorY: midY, anchorX: midX };
+      setScale(next);
+    };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd);
+    el.addEventListener("touchcancel", onEnd);
     return () => {
-      cancelled = true;
-      try {
-        docRef.current?.destroy();
-      } catch {}
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
     };
   }, [current?.id]);
 
@@ -146,17 +245,10 @@ export function PdfViewer() {
 
   // Render all pages whenever the doc is ready or the scale changes.
   useEffect(() => {
-    const doc = docRef.current;
-    if (!doc || !rendered) return;
+    if (!loaded || loaded.id !== current?.id) return;
+    const doc = loaded.doc;
     let cancelled = false;
-    // cancel any in-flight renders from a previous scale so they don't collide
-    // with the new ones on the same canvas (which makes PDF.js throw).
-    renderTasksRef.current.forEach((t) => {
-      try {
-        t.cancel();
-      } catch {}
-    });
-    renderTasksRef.current = [];
+    const tasks: any[] = [];
     // supersample: render the bitmap at >=2x the display size so text is crisp
     // even on 1x monitors, then let CSS downscale it to the layout size.
     const quality = Math.max(2, window.devicePixelRatio || 1);
@@ -172,10 +264,23 @@ export function PdfViewer() {
           continue;
         }
         const page = await doc.getPage(i);
+        if (cancelled) return;
         const vp = page.getViewport({ scale });
         holder.style.width = `${vp.width}px`;
         holder.style.height = `${vp.height}px`;
         items[i] = { page, vp };
+      }
+      // all holders are sized now: restore this paper's previous scroll offset
+      if (restoreRef.current && restoreRef.current === current?.id && containerRef.current) {
+        containerRef.current.scrollTop = scrollMemo.get(restoreRef.current) || 0;
+      }
+      restoreRef.current = null;
+      // after a Ctrl+wheel zoom, keep the point under the pointer in place
+      const anchor = zoomAnchorRef.current;
+      zoomAnchorRef.current = null;
+      if (anchor && containerRef.current) {
+        containerRef.current.scrollTop = anchor.top * anchor.ratio - anchor.anchorY;
+        containerRef.current.scrollLeft = anchor.left * anchor.ratio - anchor.anchorX;
       }
       // pass 2 — render each page's bitmap + text layer (a failure on one page
       // must not abort the others)
@@ -192,25 +297,44 @@ export function PdfViewer() {
         canvas.height = Math.floor(rvp.height);
         canvas.style.width = `${vp.width}px`;
         canvas.style.height = `${vp.height}px`;
-        const ctx = canvas.getContext("2d")!;
+        // Render offscreen: an old paper/zoom must never paint into a reused canvas.
+        const bitmap = document.createElement("canvas");
+        bitmap.width = canvas.width;
+        bitmap.height = canvas.height;
+        const ctx = bitmap.getContext("2d")!;
         try {
           const task = page.render({ canvasContext: ctx, viewport: rvp });
-          renderTasksRef.current.push(task);
-          await task.promise;
-          if (textLayer) await renderTextLayer(page, vp, textLayer);
-        } catch {
-          /* render cancelled (scale changed) or failed — leave this page for the next pass */
+          tasks.push(task);
+          try { await task.promise; } finally { tasks.pop(); }
+          if (cancelled) return;
+          canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+          if (textLayer) {
+            const text = document.createElement("div");
+            text.className = "textLayer";
+            await renderTextLayer(page, vp, text);
+            if (cancelled) return;
+            textLayer.style.cssText = text.style.cssText;
+            const rotation = text.getAttribute("data-main-rotation");
+            if (rotation !== null) textLayer.setAttribute("data-main-rotation", rotation);
+            textLayer.replaceChildren(...Array.from(text.childNodes));
+          }
+        } catch (error) {
+          if (!cancelled) setLoadError(String((error as any)?.message || error));
         }
       }
-    })();
+    })().catch((error) => {
+      if (!cancelled) setLoadError(String(error?.message || error));
+    });
     return () => {
       cancelled = true;
+      tasks.forEach((task) => { try { task.cancel(); } catch {} });
     };
-  }, [rendered, scale, current?.id]);
+  }, [loaded, scale, current?.id]);
 
   // Scroll to a requested page/section.
   useEffect(() => {
     if (gotoPage == null) return;
+    restoreRef.current = null; // an explicit jump wins over scroll restore
     const el = pageRefs.current[gotoPage];
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     setGoto(null);
@@ -475,6 +599,12 @@ export function PdfViewer() {
 
   return (
     <div className="pdf-wrap">
+      {loadError && <div role="alert" className="pdf-load-error">
+        {uiLang === "zh" ? "PDF 打开失败：" : "Could not open PDF: "}{loadError}
+        <button onClick={() => { setLoadError(""); setRetry((value) => value + 1); }}>
+          {uiLang === "zh" ? "重试" : "Retry"}
+        </button>
+      </div>}
       <div className="pdf-toolbar">
         <span className="paper-title" title={current.title}>
           {current.title || "Untitled"}
@@ -601,13 +731,16 @@ export function PdfViewer() {
           </div>
         </div>
       )}
-      <div className={`pdf-scroll draw-${drawTool}`} ref={containerRef} onMouseUp={onMouseUp}>
+      <div className={`pdf-scroll draw-${drawTool}`} ref={containerRef} onMouseUp={onMouseUp}
+        onScroll={(e) => {
+          if (current && !restoreRef.current) scrollMemo.set(current.id, e.currentTarget.scrollTop);
+        }}>
         {Array.from({ length: n }).map((_, i) => {
           const pinfo = pages?.pages[i];
           const scaleFromPdf = pinfo ? scale : scale;
           return (
             <div
-              key={i}
+              key={`${current.id}:${i}`}
               className="pdf-page"
               data-page-index={i}
               ref={(el) => (pageRefs.current[i] = el)}

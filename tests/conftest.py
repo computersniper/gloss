@@ -43,6 +43,8 @@ if str(_BACKEND_DIR) not in sys.path:
 # network-gated tests.)
 _DATA_DIR = Path(tempfile.mkdtemp(prefix="moonlight-tests-"))
 os.environ["GLOSS_DATA_DIR"] = str(_DATA_DIR)
+# The agent home (``~/.glossx``) must not be the developer's real one either.
+os.environ["GLOSSX_HOME"] = str(_DATA_DIR / "glossx-home")
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001

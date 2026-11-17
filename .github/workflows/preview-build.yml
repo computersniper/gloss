@@ -1,0 +1,99 @@
+name: Preview build
+
+# Builds downloadable preview packages for private development forks such as
+# GlossX. Nothing is published: the Windows executable and the npm tarball are
+# kept as workflow artifacts that expire after 14 days.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [glossX-dev]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "packaging/**"
+      - "desktop/**"
+      - "scripts/**"
+      - "package.json"
+      - ".github/workflows/preview-build.yml"
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-exe:
+    # The public repository uses release.yml instead.
+    if: github.repository != 'computersniper/gloss'
+    name: Windows x64 executable
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            packaging/requirements-build.txt
+      - name: Build portable Windows executable
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - name: Smoke test Windows executable
+        shell: pwsh
+        run: ./dist/Gloss.exe --version
+      - name: Verify the built-in browser
+        # Starts the packaged app with its backend and drives a page in the
+        # Electron browser through the backend API, as the agent does.
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP 'glossx-desktop-browser.json'
+          Start-Process -FilePath ./dist/Gloss.exe -ArgumentList @("--glossx-smoke=$report") | Out-Null
+          # The portable executable unpacks itself first; wait for the report.
+          $deadline = (Get-Date).AddMinutes(3)
+          while (-not (Test-Path -LiteralPath $report) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+          if (-not (Test-Path -LiteralPath $report)) { throw 'Desktop browser check timed out' }
+          Start-Sleep -Seconds 1
+          Get-Content -LiteralPath $report
+          if (-not (Get-Content -LiteralPath $report -Raw | ConvertFrom-Json).ok) { throw 'Desktop browser check failed' }
+      - name: Verify the system-browser fallback
+        # The npm package still drives an installed Edge or Chrome.
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP 'glossx-system-browser.json'
+          $process = Start-Process -FilePath ./dist/glossx-backend/glossx-backend.exe -ArgumentList @('--browser-smoke', $report) -WindowStyle Hidden -PassThru
+          if (-not $process.WaitForExit(60000)) { Stop-Process -Id $process.Id; throw 'Bundled browser diagnostic timed out' }
+          $process.Refresh()
+          Get-Content -LiteralPath $report
+          if ($process.ExitCode -ne 0) { throw 'Bundled browser diagnostic failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlossX-windows-x64
+          path: dist/Gloss.exe
+          retention-days: 14
+
+  npm-package:
+    if: github.repository != 'computersniper/gloss'
+    name: npm package (macOS / Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build npm tarball
+        run: npm pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlossX-npm-package
+          path: gloss-local-*.tgz
+          retention-days: 14

@@ -26,6 +26,8 @@ def test_top_level_package_is_publishable_and_exposes_cli_bins() -> None:
     assert package["bin"] == {
         "gloss": "scripts/gloss.mjs",
         "gloss-local": "scripts/gloss.mjs",
+        "glossx": "scripts/gloss.mjs",
+        "glossx-local": "scripts/gloss.mjs",
     }
     assert "frontend/dist/**" in package["files"]
     assert "backend/app/**/*.py" in package["files"]
@@ -44,7 +46,7 @@ def test_npm_cli_supports_first_run_and_doctor() -> None:
 
 def test_windows_executable_packaging_is_wired_into_releases() -> None:
     launcher = ROOT / "packaging" / "windows_launcher.py"
-    spec = ROOT / "packaging" / "Gloss.spec"
+    spec = ROOT / "packaging" / "GlossX.spec"
     icon = ROOT / "packaging" / "gloss.ico"
     build_script = ROOT / "scripts" / "build-windows.ps1"
     workflow = ROOT / ".github" / "workflows" / "release.yml"
@@ -60,19 +62,37 @@ def test_windows_executable_packaging_is_wired_into_releases() -> None:
     )
     release = workflow.read_text(encoding="utf-8")
     assert "GLOSS_FRONTEND_DIST" in config
-    assert 'webview.create_window(' in desktop_launcher
-    assert 'gui="edgechromium"' in desktop_launcher
-    assert 'icon=str(icon_path)' in desktop_launcher
+    # The frozen program is only the backend; the Electron shell owns the window.
+    assert "import webview" not in desktop_launcher
+    assert "GLOSSX_READY_FILE" in desktop_launcher
     assert '"--headless"' in desktop_launcher
-    assert "import webbrowser" not in desktop_launcher
     assert "_ensure_standard_streams" in desktop_launcher
     assert "console=False" in desktop_spec
-    assert 'icon=str(project_root / "packaging" / "gloss.ico")' in desktop_spec
+    assert 'name="glossx-backend"' in desktop_spec
+    assert "COLLECT(" in desktop_spec
     assert icon.is_file()
-    assert "pywebview==6.2.1" in build_requirements
+    assert "pywebview" not in build_requirements
     assert "./dist/Gloss.exe --version" in release
     assert "npm pack" in release
-    assert "npm publish gloss-local-*.tgz" in release
+    assert 'npm publish "gloss-local-$version.tgz" --access public --tag "$dist_tag"' in release
+    assert "dist_tag=next" in release
+    assert "prerelease:" in release
+
+
+def test_desktop_shell_ships_the_backend_and_its_browser() -> None:
+    desktop = ROOT / "desktop"
+    package = json.loads((desktop / "package.json").read_text(encoding="utf-8"))
+    main = (desktop / "main.js").read_text(encoding="utf-8")
+    build_script = (ROOT / "scripts" / "build-windows.ps1").read_text(encoding="utf-8")
+
+    assert package["main"] == "main.js"
+    assert {"from": "../dist/glossx-backend", "to": "backend"} in package["build"]["extraResources"]
+    assert package["build"]["portable"]["artifactName"] == "Gloss.exe"
+    assert (desktop / "package-lock.json").is_file()
+    # The backend drives the window's own Chromium and reports where it listens.
+    assert "GLOSSX_BROWSER_CDP" in main and "GLOSSX_READY_FILE" in main
+    assert "contextIsolation: true" in main and "sandbox: true" in main
+    assert "npm --prefix desktop run dist:win" in build_script
 
 
 def test_windows_build_uses_an_isolated_virtual_environment() -> None:
@@ -99,58 +119,21 @@ def test_windows_launcher_selects_the_next_available_port(monkeypatch) -> None:
     assert launcher._select_available_port("127.0.0.1", 8010) == 8012
 
 
-def test_windows_launcher_blocks_close_until_the_dialog_confirms(monkeypatch) -> None:
+def test_launcher_reports_its_address_to_the_desktop_shell(monkeypatch, tmp_path) -> None:
     launcher_path = ROOT / "packaging" / "windows_launcher.py"
-    spec = importlib.util.spec_from_file_location("gloss_windows_exit", launcher_path)
+    spec = importlib.util.spec_from_file_location("gloss_windows_ready", launcher_path)
     assert spec is not None and spec.loader is not None
     launcher = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(launcher)
 
-    scripts: list[str] = []
-    disabled: list[bool] = []
+    ready = tmp_path / "ready"
+    monkeypatch.setenv("GLOSSX_READY_FILE", str(ready))
+    launcher._report_ready("http://127.0.0.1:8012")
+    assert ready.read_text(encoding="utf-8") == "http://127.0.0.1:8012"
 
-    class ImmediateThread:
-        def __init__(self, *, target, **_kwargs):
-            self.target = target
-
-        def start(self):
-            self.target()
-
-    class Loaded:
-        @staticmethod
-        def is_set():
-            return True
-
-    class FakeWindow:
-        events = type("Events", (), {"loaded": Loaded()})()
-        destroyed = False
-
-        @staticmethod
-        def evaluate_js(script):
-            scripts.append(script)
-
-        def destroy(self):
-            self.destroyed = True
-
-    monkeypatch.setattr(launcher.threading, "Thread", ImmediateThread)
-    monkeypatch.setattr(launcher, "_exit_confirmation_enabled", lambda: True)
-    monkeypatch.setattr(
-        launcher,
-        "_disable_future_exit_confirmation",
-        lambda: disabled.append(True),
-    )
-
-    window = FakeWindow()
-    bridge = launcher.DesktopBridge()
-    bridge.bind(window)
-
-    assert bridge.on_closing() is False
-    assert scripts and launcher.EXIT_REQUEST_EVENT in scripts[0]
-    assert bridge.cancel_exit() is True
-    assert bridge.confirm_exit(True) is True
-    assert disabled == [True]
-    assert window.destroyed is True
-    assert bridge.on_closing() is None
+    monkeypatch.delenv("GLOSSX_READY_FILE")
+    launcher._report_ready("http://127.0.0.1:8013")
+    assert ready.read_text(encoding="utf-8") == "http://127.0.0.1:8012"
 
 
 def test_native_linux_and_windows_wrappers_exist() -> None:

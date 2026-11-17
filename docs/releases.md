@@ -9,9 +9,12 @@ Tag builds publish these assets alongside the npm tarball:
 
 The Windows executables are portable: download the matching `.exe` and open it
 directly—no archive extraction, terminal, or browser tab is needed. `Gloss.exe`
-is kept as an x64 compatibility download. The desktop app uses Microsoft Edge
-WebView2, which is included with current Windows 10 and Windows 11 releases.
+is kept as an x64 compatibility download. The portable desktop app bundles its Chromium-based Electron shell.
 The Windows build targets x64; Windows on ARM runs it through x64 emulation.
+
+## Version channels
+
+On the Gloss repository, Git tags that contain a prerelease suffix, such as `v2.0.0-beta.1`, create GitHub prereleases. For npm publication, dispatch the release workflow for the exact version tag and enable `publish_npm`. The workflow publishes prereleases to `next` and stable builds to `latest`.
 
 ## Linux and macOS
 

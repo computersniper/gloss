@@ -17,6 +17,8 @@ from .base import (
     message_text,
     provider_runtime_options,
     split_system,
+    normalize_usage,
+    capture_stream_usage,
 )
 from .local_claude import LocalClaudeProvider
 from .local_codex import LocalCodexProvider
@@ -34,6 +36,60 @@ _FEATURE_CONTEXT: ContextVar[dict | None] = ContextVar(
     "gloss_feature_context", default=None
 )
 _PAPER_SESSION_LOCKS: dict[tuple[str, str, str], asyncio.Lock] = {}
+# Optional per-run meter (GlossX agent budget). It must expose
+# ``before_llm_call()`` (may raise to refuse the call) and
+# ``after_llm_call(tokens_est: int)``.
+_CALL_METER: ContextVar[object | None] = ContextVar("gloss_call_meter", default=None)
+_HARNESS_SESSION: ContextVar[dict | None] = ContextVar("gloss_harness_provider_session", default=None)
+_HARNESS_RESET: ContextVar[object | None] = ContextVar("gloss_harness_cache_reset", default=None)
+
+
+@contextmanager
+def harness_session(session: dict, cache_reset=None):
+    token = _HARNESS_SESSION.set(session)
+    reset_token = _HARNESS_RESET.set(cache_reset)
+    try:
+        yield
+    finally:
+        _HARNESS_SESSION.reset(token)
+        _HARNESS_RESET.reset(reset_token)
+
+
+@contextmanager
+def call_meter(meter: object | None):
+    """Count every provider call made in this context against ``meter``."""
+    token = _CALL_METER.set(meter)
+    try:
+        yield
+    finally:
+        _CALL_METER.reset(token)
+
+
+def _meter_before() -> None:
+    meter = _CALL_METER.get()
+    if meter is not None:
+        meter.before_llm_call()  # type: ignore[attr-defined]
+
+
+def current_call_meter():
+    return _CALL_METER.get()
+
+
+def _meter_unavailable() -> None:
+    callback = getattr(_CALL_METER.get(), "usage_unavailable", None)
+    if callback:
+        callback()
+
+
+def _meter_after(system: str, messages: list[dict], text: str, usage: dict | None = None) -> None:
+    meter = _CALL_METER.get()
+    if meter is not None:
+        tokens = estimate_text_tokens(system + "\n" + message_text(messages))
+        tokens += estimate_text_tokens(text or "")
+        meter.after_llm_call(tokens)  # type: ignore[attr-defined]
+        callback = getattr(meter, "after_usage", None)
+        if callback:
+            callback(normalize_usage(usage, system, messages, text))
 
 
 @contextmanager
@@ -166,22 +222,13 @@ def _record_usage(
     context = _USAGE_CONTEXT.get()
     if not context:
         return
-    raw = usage or {}
-    prompt = int(raw.get("prompt_tokens") or 0)
-    completion = int(raw.get("completion_tokens") or 0)
-    total = int(raw.get("total_tokens") or 0)
-    exact = total > 0 or prompt > 0 or completion > 0
-    if exact:
-        total = total or prompt + completion
-    else:
-        prompt = estimate_text_tokens(system + "\n" + message_text(messages))
-        completion = estimate_text_tokens(text)
-        total = prompt + completion
+    raw = normalize_usage(usage, system, messages, text)
     store.record_ai_usage(
         task_type=context["task_type"], provider=provider, model=model,
         paper_id=context.get("paper_id"), plugin_id=context.get("plugin_id"),
-        prompt_tokens=prompt, completion_tokens=completion, total_tokens=total,
-        estimated=not exact,
+        prompt_tokens=raw["input_tokens"], completion_tokens=raw["output_tokens"], total_tokens=raw["total_tokens"],
+        cached_input_tokens=raw["cached_input_tokens"], cache_write_tokens=raw["cache_write_tokens"],
+        reasoning_tokens=raw["reasoning_tokens"], estimated=not raw["exact"],
     )
 
 
@@ -241,6 +288,11 @@ async def test_connection(name: str | None = None) -> dict:
 
 def get_provider(name: str | None = None) -> Provider:
     name = resolve_provider_name(name)
+    if name in _PROVIDERS and not is_enabled(name):
+        raise RuntimeError(
+            f"The '{name}' model provider is turned off in Settings. "
+            "Turn it on or choose another provider."
+        )
     return _PROVIDERS.get(name, _PROVIDERS["local_claude"])
 
 
@@ -286,8 +338,21 @@ def _settings_for_current_feature(
     }
 
 
-def available() -> list[str]:
+def all_providers() -> list[str]:
+    """Every provider GlossX knows, whether or not it is switched on."""
     return list(_PROVIDERS.keys())
+
+
+def is_enabled(name: str, cfg: dict | None = None) -> bool:
+    """Providers are on unless the user switched them off in Settings."""
+    providers = (cfg or load_config()).get("providers") or {}
+    return (providers.get(name) or {}).get("enabled", True) is not False
+
+
+def available() -> list[str]:
+    """Providers the user can pick: the ones switched on in Settings."""
+    cfg = load_config()
+    return [name for name in _PROVIDERS if is_enabled(name, cfg)]
 
 
 async def complete(
@@ -304,6 +369,7 @@ async def complete(
     p = get_provider(provider_name)
     sys, msgs = split_system(messages, system)
     feature = settings
+    _meter_before()
     try:
         with provider_runtime_options(effort=feature.get("effort")):
             if (
@@ -323,8 +389,11 @@ async def complete(
                 sent_sys, sent_msgs = sys, msgs
     except Exception as error:
         _record_status(provider_name, False, str(error) or type(error).__name__)
+        _meter_unavailable()
         raise
     _record_status(provider_name, True)
+    result = (result[0], normalize_usage(result[1], sent_sys, sent_msgs, result[0]))
+    _meter_after(sent_sys, sent_msgs, result[0], result[1])
     _record_usage(
         provider=provider_name, model=model, system=sent_sys, messages=sent_msgs,
         text=result[0], usage=result[1],
@@ -338,7 +407,9 @@ async def stream(
     *,
     provider: str | None = None,
     model: str | None = None,
+    effort: str | None = None,
 ):
+    """``effort`` (a thread's own reasoning effort) wins over the feature's."""
     settings = _settings_for_current_feature(provider, model)
     provider_name = settings["provider"]
     model = settings.get("model")
@@ -347,25 +418,80 @@ async def stream(
     feature = settings
     connected = False
     chunks: list[str] = []
+    _meter_before()
+    usage = {}
     try:
-        with provider_runtime_options(effort=feature.get("effort")):
-            async for chunk in p.stream(sys, msgs, model):
+        with provider_runtime_options(effort=effort or feature.get("effort")), capture_stream_usage() as usage:
+            source = _harness_stream(p, provider_name, sys, msgs, model) if _HARNESS_SESSION.get() is not None else p.stream(sys, msgs, model)
+            async for chunk in source:
                 if not connected:
                     _record_status(provider_name, True)
                     connected = True
                 chunks.append(chunk)
                 yield chunk
-    except Exception as error:
-        _record_status(provider_name, False, str(error) or type(error).__name__)
+    except BaseException as error:
+        if not isinstance(error, asyncio.CancelledError):
+            _record_status(provider_name, False, str(error) or type(error).__name__)
+        if chunks or usage:
+            # Preserve incurred usage even if the caller interrupts after text
+            # arrives. An incomplete billing snapshot isn't an exact call.
+            partial = dict(usage)
+            if not partial.get("_complete"):
+                partial["exact"] = False
+            _meter_after(sys, msgs, "".join(chunks), partial)
+            _record_usage(provider=provider_name, model=model, system=sys, messages=msgs,
+                          text="".join(chunks), usage=partial)
+        else:
+            _meter_unavailable()
         raise
     if not connected:
         _record_status(provider_name, True)
-    # The provider streaming contract only yields text, not a terminal usage
-    # object. Record a tokenizer estimate rather than inventing exact values.
+    _meter_after(sys, msgs, "".join(chunks), usage)
+    # The task-local sink carries terminal usage; missing usage is estimated.
     _record_usage(
         provider=provider_name, model=model, system=sys, messages=msgs,
-        text="".join(chunks), usage=None,
+        text="".join(chunks), usage=usage,
     )
+
+
+async def _harness_stream(p: Provider, name: str, system: str, messages: list[dict], model: str | None):
+    """CLI resume uses only an appended suffix; mismatches safely reseed."""
+    from .base import report_stream_usage
+    session = _HARNESS_SESSION.get()
+    method = getattr(p, "complete_session", None)
+    if not session or not callable(method):
+        async for chunk in p.stream(system, messages, model):
+            yield chunk
+        return
+    effective_model = model or (load_config().get("providers", {}).get(name) or {}).get("model")
+    signature = hashlib.sha256(("harness-v2\n" + name + "\n" + str(effective_model) + "\n" + system).encode()).hexdigest()
+    record = session.get("provider_thread") or {}
+    old = record.get("messages") or []
+    matches = bool(old) and len(messages) >= len(old) and all(
+        a.get("role") == b.get("role") and str(a.get("content", "")) == str(b.get("content", ""))
+        for a, b in zip(old, messages))
+    resume = record.get("id") if record.get("signature") == signature and matches and record.get("compactions") == session["context"].get("compactions", 0) else None
+    reset = _HARNESS_RESET.get()
+    if record and not resume and callable(reset):
+        reset("model_or_history_changed")
+    sent = messages[len(old):] if resume else messages
+    if not sent:
+        sent = [{"role": "user", "content": "Continue."}]
+    with provider_runtime_options(harness=True, codex_usage_baseline=record.get("thread_usage") if resume else None):
+        try:
+            text, usage, thread = await method("" if resume and name == "local_codex" else system, sent, model, session_id=resume)
+        except ProviderSessionUnavailableError:
+            session.pop("provider_thread", None)
+            if callable(reset):
+                reset("thread_unavailable")
+            text, usage, thread = await method(system, messages, model, session_id=None)
+    session["provider_thread"] = {"id": thread, "signature": signature,
+                                  "compactions": session["context"].get("compactions", 0),
+                                  "thread_usage": usage.get("_thread_usage"),
+                                  "messages": [*messages, {"role": "assistant", "content": text.strip()}]}
+    report_stream_usage(usage)
+    for start in range(0, len(text), 24):
+        yield text[start:start + 24]
 
 
 async def complete_in_session(
@@ -390,14 +516,19 @@ async def complete_in_session(
     if complete_session is None:
         raise ValueError(f"provider {provider!r} does not support sessions")
     sys, msgs = split_system(messages, system)
+    if record_usage:  # nested calls from complete() are metered there
+        _meter_before()
     try:
         with provider_runtime_options(effort=settings.get("effort")):
             result = await complete_session(sys, msgs, model, session_id=session_id)
     except Exception as error:
         _record_status(provider, False, str(error) or type(error).__name__)
+        if record_usage:
+            _meter_unavailable()
         raise
     _record_status(provider, True)
     if record_usage:
+        _meter_after(sys, msgs, result[0], result[1])
         _record_usage(
             provider=provider, model=model, system=sys, messages=msgs,
             text=result[0], usage=result[1],

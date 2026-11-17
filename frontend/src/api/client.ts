@@ -336,6 +336,10 @@ export interface DoctorReport {
   checks: Array<{ id: string; status: DoctorStatus; detail: string }>;
 }
 export interface AiUsageAggregate {
+  cached_input_tokens?: number;
+  cache_write_tokens?: number;
+  reasoning_tokens?: number;
+  cache_hit_rate?: number;
   tasks: number;
   prompt_tokens: number;
   completion_tokens: number;
@@ -357,6 +361,8 @@ export interface AiUsageRecord {
   created_at: number;
 }
 export interface AiUsageSummary {
+  by_provider?: (AiUsageAggregate & { provider: string })[];
+  by_day?: (AiUsageAggregate & { day: string })[];
   total: AiUsageAggregate;
   by_task: (AiUsageAggregate & { task_type: string })[];
   recent: AiUsageRecord[];
@@ -655,10 +661,12 @@ export const api = {
       body: JSON.stringify({ provider }),
     }).then((r) => j<ProviderTestResult>(r)),
 
+  detectLocalCli: (refresh = false) => fetch(`/api/settings/local-cli?refresh=${refresh}`).then((r) => j<{ tools: Record<string, {path: string; version: string | null; source: string}[]> }>(r)),
   getSettings: () =>
     fetch("/api/settings").then((r) => j<{
       config: any;
       available_providers: string[];
+      all_providers?: string[];
       provider_statuses: Record<string, ProviderConnectionStatus>;
     }>(r)),
   getProviderStatuses: () =>

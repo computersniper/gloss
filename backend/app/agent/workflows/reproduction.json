@@ -1,0 +1,34 @@
+{
+  "api_version": 2,
+  "id": "reproduction",
+  "kind": "workflow",
+  "name": "Reproduction",
+  "version": "1.0.0",
+  "author": "GlossX",
+  "description": "Reproduce a paper's core result: extract the setup from the paper with citations, delegate a minimal implementation to a sandboxed coding agent, and report what matches the paper.",
+  "permissions": ["library:read", "ai:complete", "code:execute"],
+  "capability": {
+    "card": "Reproduce or implement a paper's method: extract datasets, hyperparameters and metrics with citations, have a sandboxed coding agent build and run it, report gaps.",
+    "input": {"request": "string"},
+    "output": {"report": "markdown", "files_changed": "list[str]", "claims": "claim[] with span_ids"}
+  },
+  "steps": [
+    {"id": "plan", "use": "agent.planner"},
+    {"id": "screen", "use": "decider.screen", "args": {"max_candidates": 1, "max_accept": 2},
+     "depends_on": ["plan"]},
+    {"id": "setup", "use": "agent.reader", "map_over": "screen.accepted",
+     "args": {"paper_id": "{{item.paper_id}}", "question": "Everything needed to reproduce the main result: task, datasets and splits, model architecture, hyperparameters, training procedure, evaluation metrics and the reported numbers."},
+     "context": "shared_session", "depends_on": ["screen"]},
+    {"id": "details", "use": "paper.search_spans", "map_over": "plan.queries",
+     "args": {"query": "{{item}} hyperparameters dataset training evaluation", "paper_ids": "{{screen.accepted.paper_id}}", "k": 4},
+     "depends_on": ["screen"]},
+    {"id": "code", "use": "delegate.codex", "fallback": ["delegate.claude_code"],
+     "args": {"task": "Request: {{goal}}\n\nImplement a minimal, runnable reproduction of the paper's core method in this workspace. Put the entry point in run.py and a README.md that lists every setting you took from the paper, every setting you had to guess, and the command to run. Run a small smoke test and report its output. Setup extracted from the paper (JSON): {{setup}}"},
+     "depends_on": ["setup"]},
+    {"id": "verify", "use": "agent.verifier", "depends_on": ["code", "details"]},
+    {"id": "write", "use": "agent.writer", "depends_on": ["verify"],
+     "args": {"instructions": "Write a reproduction report: (1) the setup as stated in the paper, every item cited; (2) what the coding agent implemented and ran, taken only from its output (say plainly if no coding agent was available or the step was not approved); (3) a checklist of paper settings marked matched, guessed or missing; (4) the next steps to close the gaps."}}
+  ],
+  "loop": {"use": "loop:reflexion", "stop": {"coverage": 0.8, "max_rounds": 2, "patience": 1}},
+  "agent": {"name": "Reproducer", "icon": "🧪"}
+}

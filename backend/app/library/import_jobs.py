@@ -327,6 +327,9 @@ class ImportJobManager:
                         )
                 if cancel_won:
                     await self._finish_cancelled(job)
+                else:
+                    from ..routers.papers import _seed_paper_project
+                    await run_in_threadpool(_seed_paper_project, paper["id"])
         except asyncio.CancelledError:
             await self._finish_cancelled(job)
         except (_JobCancelled, ProcessCancelledError, service.ImportCancelledError):

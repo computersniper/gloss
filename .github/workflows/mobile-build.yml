@@ -1,0 +1,90 @@
+name: Mobile build
+
+# GlossX for iPhone, iPad and Android: one Capacitor shell (mobile/) that
+# connects to GlossX on the user's computer. The Android debug APK is kept as a
+# workflow artifact for 14 days; the iOS job only checks that the app compiles
+# (installing on a device needs the owner's Apple signing in Xcode).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [glossX-dev]
+    paths:
+      - "mobile/**"
+      - "frontend/**"
+      - ".github/workflows/mobile-build.yml"
+  pull_request:
+    paths:
+      - "mobile/**"
+      - "frontend/**"
+      - ".github/workflows/mobile-build.yml"
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    if: github.repository != 'computersniper/gloss'
+    name: Android debug APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            mobile/package-lock.json
+            frontend/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - run: npm ci --no-fund --no-audit
+      - name: Install shared frontend
+        working-directory: frontend
+        run: npm ci --no-fund --no-audit
+      - run: npm run build:web
+      - run: npx cap sync android
+      - name: Build debug APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlossX-android-debug
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
+  ios:
+    if: github.repository != 'computersniper/gloss'
+    name: iOS / iPadOS compile check
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            mobile/package-lock.json
+            frontend/package-lock.json
+      - run: npm ci --no-fund --no-audit
+      - name: Install shared frontend
+        working-directory: frontend
+        run: npm ci --no-fund --no-audit
+      - run: npm run build:web
+      - run: npx cap sync ios
+      - name: Build for the simulator (unsigned)
+        working-directory: mobile/ios/App
+        run: >
+          xcodebuild -project App.xcodeproj -scheme App -configuration Debug
+          -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO build

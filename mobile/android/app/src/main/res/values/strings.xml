@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">GlossX</string>
+    <string name="title_activity_main">GlossX</string>
+    <string name="package_name">dev.glossx.mobile</string>
+    <string name="custom_url_scheme">dev.glossx.mobile</string>
+</resources>

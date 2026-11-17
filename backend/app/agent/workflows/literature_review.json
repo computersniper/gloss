@@ -1,0 +1,32 @@
+{
+  "api_version": 2,
+  "id": "literature-review",
+  "kind": "workflow",
+  "name": "Literature Review",
+  "version": "1.0.0",
+  "author": "GlossX",
+  "description": "Answer a research question with a cited review: plan sub-questions, search, screen, read papers in parallel, verify every claim and re-search until coverage is met.",
+  "permissions": ["library:read", "library:write", "search:web", "ai:complete"],
+  "capability": {
+    "card": "Answer a research question with a cited review: plan sub-questions, search, read papers in parallel, verify every claim, and re-search until coverage is met.",
+    "input": {"question": "string", "max_papers": "integer"},
+    "output": {"report": "markdown", "claims": "claim[] with span_ids"}
+  },
+  "steps": [
+    {"id": "plan", "use": "agent.planner"},
+    {"id": "search", "use": "scholar.search", "map_over": "plan.queries",
+     "args": {"query": "{{item}}", "k": 6},
+     "fallback": ["mcp.zotero.search", "library.search"], "depends_on": ["plan"]},
+    {"id": "screen", "use": "decider.screen", "args": {"max_candidates": 8, "max_accept": 4},
+     "depends_on": ["search"]},
+    {"id": "import", "use": "library.import", "map_over": "screen.to_import",
+     "args": {"source": "{{item.source}}"}, "depends_on": ["screen"]},
+    {"id": "read", "use": "agent.reader", "map_over": "screen.accepted",
+     "args": {"paper_id": "{{item.paper_id}}", "source": "{{item.source}}", "question": "{{goal}}"},
+     "context": "shared_session", "depends_on": ["screen", "import"]},
+    {"id": "verify", "use": "agent.verifier", "depends_on": ["read"]},
+    {"id": "write", "use": "agent.writer", "depends_on": ["verify"]}
+  ],
+  "loop": {"use": "loop:plan-execute-verify", "stop": {"coverage": 0.8, "max_rounds": 3}},
+  "agent": {"name": "Review Scout", "icon": "🔭"}
+}

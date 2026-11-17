@@ -20,6 +20,53 @@ Message = dict  # {"role": "user"|"assistant"|"system", "content": str}
 _RUNTIME_OPTIONS: ContextVar[dict[str, Any]] = ContextVar(
     "gloss_provider_runtime_options", default={}
 )
+_STREAM_USAGE: ContextVar[dict | None] = ContextVar("gloss_stream_usage", default=None)
+
+
+@contextmanager
+def capture_stream_usage():
+    """Per-call, task-local usage sink; never share mutable provider state."""
+    usage: dict = {}
+    token = _STREAM_USAGE.set(usage)
+    try:
+        yield usage
+    finally:
+        _STREAM_USAGE.reset(token)
+
+
+def report_stream_usage(usage: dict) -> None:
+    sink = _STREAM_USAGE.get()
+    if sink is not None:
+        sink.update(usage)
+        sink.setdefault("_complete", True)
+
+
+def normalize_usage(raw: dict | None, system: str = "", messages: list[Message] | None = None,
+                    text: str = "") -> dict:
+    """Total input includes cache reads/writes; old token aliases stay supported."""
+    raw = raw or {}
+    exact = bool(raw.get("exact", any(k in raw for k in ("input_tokens", "prompt_tokens"))
+                     and any(int(raw.get(k) or 0) for k in ("input_tokens", "prompt_tokens", "output_tokens", "completion_tokens"))))
+    inp = int(raw.get("input_tokens", raw.get("prompt_tokens", 0)) or 0)
+    out = int(raw.get("output_tokens", raw.get("completion_tokens", 0)) or 0)
+    if not exact:
+        inp = estimate_text_tokens(system + "\n" + message_text(messages or []))
+        out = estimate_text_tokens(text)
+    cached = min(max(0, int(raw.get("cached_input_tokens") or 0)), max(0, inp)) if exact else 0
+    return {"input_tokens": max(0, inp), "cached_input_tokens": cached,
+            "cache_write_tokens": max(0, int(raw.get("cache_write_tokens") or 0)),
+            "output_tokens": max(0, out), "reasoning_tokens": max(0, int(raw.get("reasoning_tokens") or 0)),
+            "exact": exact, "prompt_tokens": max(0, inp), "completion_tokens": max(0, out),
+            "total_tokens": max(0, inp) + max(0, out)}
+
+
+def anthropic_usage(raw: dict | None) -> dict:
+    raw = raw or {}
+    return {"input_tokens": int(raw.get("input_tokens") or 0) + int(raw.get("cache_read_input_tokens") or 0)
+            + int(raw.get("cache_creation_input_tokens") or 0),
+            "cached_input_tokens": int(raw.get("cache_read_input_tokens") or 0),
+            "cache_write_tokens": int(raw.get("cache_creation_input_tokens") or 0),
+            "output_tokens": int(raw.get("output_tokens") or 0), "exact": "input_tokens" in raw}
 
 
 class ProviderSessionUnavailableError(RuntimeError):
@@ -41,11 +88,88 @@ def runtime_option(name: str, default: Any = None) -> Any:
     return _RUNTIME_OPTIONS.get().get(name, default)
 
 
+# -- live progress (what a local CLI is doing while it works) ---------------------
+# A sink receives ``{"kind": "thinking", "text": delta}`` (reasoning as it
+# streams) or ``{"kind": "step", "text": "..."}`` (one action the CLI took).
+_PROGRESS: ContextVar[Any] = ContextVar("gloss_provider_progress", default=None)
+
+
+@contextmanager
+def progress_sink(callback: Any):
+    token = _PROGRESS.set(callback)
+    try:
+        yield
+    finally:
+        _PROGRESS.reset(token)
+
+
+def wants_progress() -> bool:
+    return _PROGRESS.get() is not None
+
+
+def report_progress(kind: str, text: str) -> None:
+    sink = _PROGRESS.get()
+    if sink is None or not text:
+        return
+    try:
+        sink({"kind": kind, "text": text})
+    except Exception:  # noqa: BLE001 - progress is best effort
+        pass
+
+
+async def communicate_lines(proc: Any, stdin: bytes | None, timeout: float, on_line: Any) -> tuple[bytes, bytes]:
+    """``proc.communicate`` that also hands each stdout line to ``on_line`` as it
+    arrives. Raises ``asyncio.TimeoutError`` like ``wait_for`` would."""
+    import asyncio
+
+    async def feed() -> None:
+        if proc.stdin is None:
+            return
+        try:
+            if stdin:
+                proc.stdin.write(stdin)
+                await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            proc.stdin.close()
+
+    out: list[bytes] = []
+
+    def emit(line: bytes) -> None:
+        try:
+            on_line(line)
+        except Exception:  # noqa: BLE001 - a bad line must not break the call
+            pass
+
+    async def read_out() -> None:
+        # Chunks, not readline(): one JSON event can exceed the stream's line limit.
+        pending = b""
+        while True:
+            chunk = await proc.stdout.read(65536)
+            if not chunk:
+                if pending:
+                    emit(pending)
+                return
+            out.append(chunk)
+            pending += chunk
+            *lines, pending = pending.split(b"\n")
+            for line in lines:
+                emit(line)
+
+    async def run() -> bytes:
+        results = await asyncio.gather(feed(), read_out(), proc.stderr.read())
+        await proc.wait()
+        return results[2]
+
+    err = await asyncio.wait_for(run(), timeout=timeout)
+    return b"".join(out), err
+
+
 def estimate_text_tokens(text: str) -> int:
     """Return a clearly-labelled best-effort token estimate.
 
-    Local Codex CLI executions do not currently expose usage in their machine
-    readable output.  We use the same broadly useful tokenizer as the feature
+    Transports occasionally omit usage. We use the same useful tokenizer as the feature
     prompt budgeter when it is available, with a conservative character
     fallback for minimal installations.  Callers must retain whether a value
     came from this function rather than presenting it as provider billing data.
@@ -132,7 +256,8 @@ class Provider:
         self, system: str, messages: list[Message], model: str | None = None
     ) -> AsyncIterator[str]:
         """Yield text deltas. Default: chunk the non-stream completion."""
-        text, _ = await self.complete(system, messages, model)
+        text, usage = await self.complete(system, messages, model)
+        report_stream_usage(usage)
         # emit in modest chunks so the UI feels live
         step = 24
         for i in range(0, len(text), step):

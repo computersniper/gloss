@@ -7,9 +7,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..features.chat import _build_context
 from ..providers import registry
 from ..skills import loader
+from ..skills.runner import build_skill_prompt, find_skill
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -30,10 +30,7 @@ async def list_skills():
 
 
 def _lookup(skill_id: str) -> dict | None:
-    for s in loader.discover_skills():
-        if s["id"] == skill_id:
-            return s
-    return None
+    return find_skill(skill_id)
 
 
 @router.post("/run")
@@ -41,25 +38,9 @@ async def run_skill(body: RunSkillBody):
     skill = _lookup(body.skill_id)
     if not skill:
         raise HTTPException(404, "skill not found")
-    _, skill_body = loader.load_skill_body(skill["path"])
-
-    args = body.arguments or ""
-    instructions = skill_body.replace("$ARGUMENTS", args)
-
-    context = ""
-    if body.paper_id:
-        context = _build_context(body.paper_id, args or skill["name"])
-    if body.selection:
-        context += f"\n\n[Selected text]:\n{body.selection}"
-
-    system = (
-        f"You are running the '{skill['name']}' skill inside Gloss, a paper reader. "
-        f"Follow these skill instructions faithfully:\n\n{instructions}"
+    system, user = build_skill_prompt(
+        skill, body.arguments or "", body.paper_id, body.selection
     )
-    if context:
-        system += f"\n\n# Current paper context\n{context}"
-
-    user = args or f"Run the '{skill['name']}' skill on the current paper."
 
     async def gen():
         try:

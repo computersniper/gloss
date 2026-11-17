@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useStore } from "../store";
 
-const THEMES: { id: string; name: string }[] = [
+export const THEMES: { id: string; name: string }[] = [
   { id: "midnight", name: "Midnight" },
   { id: "graphite", name: "Graphite" },
   { id: "nord", name: "Nord" },
@@ -10,20 +10,12 @@ const THEMES: { id: string; name: string }[] = [
   { id: "daylight", name: "Daylight" },
 ];
 
-const STORAGE_KEY = "gloss.theme";
-
-export function ThemePicker() {
-  const [theme, setTheme] = useState(
-    () => localStorage.getItem(STORAGE_KEY) || "midnight"
-  );
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem(STORAGE_KEY, theme);
-  }, [theme]);
+export function ThemePicker({ compact = false }: { compact?: boolean } = {}) {
+  const theme = useStore((s) => s.theme);
+  const setTheme = useStore((s) => s.setTheme);
 
   return (
-    <label className="theme-picker" title="Color theme">
+    <label className={`theme-picker${compact ? " compact" : ""}`} title="Color theme">
       🎨
       <select value={theme} onChange={(e) => setTheme(e.target.value)}>
         {THEMES.map((t) => (

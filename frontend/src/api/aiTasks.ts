@@ -19,8 +19,11 @@ const generations = new Map<string, number>();
 
 const terminal = new Set(["completed", "failed", "cancelled"]);
 
+const globalListeners = new Set<() => void>();
+
 function emit(key: string) {
   listeners.get(key)?.forEach((listener) => listener());
+  globalListeners.forEach((listener) => listener());
 }
 
 function remember(key: string, snapshot: AiTaskSnapshot) {
@@ -191,4 +194,36 @@ export function useAiTask(key: string | null): AiTaskController {
       clearKey(key);
     },
   };
+}
+
+export interface AiTaskEntry {
+  key: string;
+  task: AiTaskSnapshot;
+  running: boolean;
+}
+
+/** Every AI background task started in this session (cached artifacts excluded). */
+export function useAllAiTasks(): AiTaskEntry[] {
+  const [, bump] = useReducer((value) => value + 1, 0);
+  useEffect(() => {
+    globalListeners.add(bump);
+    return () => {
+      globalListeners.delete(bump);
+    };
+  }, []);
+  return [...snapshots.entries()]
+    .filter(([, task]) => !!task.id)
+    .map(([key, task]) => ({ key, task, running: !terminal.has(task.status) }))
+    .reverse();
+}
+
+export async function cancelAiTaskByKey(key: string) {
+  const id = taskIds.get(key);
+  if (!id) return;
+  try {
+    remember(key, await api.cancelAiTask(id));
+  } catch (error: any) {
+    errors.set(key, String(error?.message || error));
+    emit(key);
+  }
 }

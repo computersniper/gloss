@@ -1,0 +1,28 @@
+{
+  "api_version": 2,
+  "id": "tutoring",
+  "kind": "workflow",
+  "name": "Tutoring",
+  "version": "1.1.0",
+  "author": "GlossX",
+  "description": "Teach a concept from the selected papers, slides or notes: read what the learner already knows, gather the passages that define and use it, then explain step by step at the right level with a worked example and a short cited quiz.",
+  "permissions": ["library:read", "ai:complete", "memory:read"],
+  "capability": {
+    "card": "Teach or explain a concept from the papers to a learner: intuition, precise definition, worked example, misconceptions and a short quiz, all cited.",
+    "input": {"topic": "string"},
+    "output": {"lesson": "markdown", "quiz": "questions with answers", "claims": "claim[] with span_ids"}
+  },
+  "steps": [
+    {"id": "plan", "use": "agent.planner"},
+    {"id": "profile", "use": "learner.profile", "args": {"query": "{{goal}}"}, "depends_on": ["plan"]},
+    {"id": "passages", "use": "paper.search_spans", "map_over": "plan.sub_questions",
+     "args": {"query": "{{item}}", "k": 4}, "depends_on": ["plan"]},
+    {"id": "definitions", "use": "paper.search_spans", "map_over": "plan.queries",
+     "args": {"query": "{{item}} definition", "k": 3}, "depends_on": ["plan"]},
+    {"id": "verify", "use": "agent.verifier", "depends_on": ["passages", "definitions", "profile"]},
+    {"id": "write", "use": "agent.writer", "depends_on": ["verify"],
+     "args": {"instructions": "Write for this learner. The learner profile lists concepts with a mastery score from 0 to 1: recap concepts above 0.8 in one line, explain prerequisites below 0.4 before using them, and if the profile is empty write for a student meeting this topic for the first time. Order: (1) the intuition in two or three sentences, (2) the precise idea in the paper's own notation, (3) a small worked example, (4) common misconceptions, (5) 'Check your understanding': three questions, each followed by a hint and then the answer with a citation. Keep every factual statement cited."}}
+  ],
+  "loop": {"use": "loop:plan-execute-verify", "stop": {"coverage": 0.8, "max_rounds": 1}},
+  "agent": {"name": "Tutor", "icon": "🎓"}
+}

@@ -16,7 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # The public Gloss repo checks Linux and Windows; private forks such as
+        # GlossX run Linux only to save Actions minutes.
+        os: ${{ fromJSON(github.repository == 'computersniper/gloss' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +45,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # The public Gloss repo checks Linux and Windows; private forks such as
+        # GlossX run Linux only to save Actions minutes.
+        os: ${{ fromJSON(github.repository == 'computersniper/gloss' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +55,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -59,5 +63,12 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
+          npx tsc --noEmit -p .
           npm test
           npm run build
+
+      - name: Check the desktop shell scripts
+        run: |
+          node --check desktop/main.js
+          node --check desktop/bridge.js
+          node --check desktop/preload.js

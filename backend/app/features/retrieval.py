@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections import Counter
 
-_WORD = re.compile(r"[a-z0-9]+")
+_WORD = re.compile(r"[a-z0-9]+|[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
 
 
 def _tok(text: str) -> list[str]:
-    return _WORD.findall(text.lower())
+    # NFKC expands PDF ligatures ("\ufb01rst" -> "first"); CJK characters count as one token each
+    return _WORD.findall(unicodedata.normalize("NFKC", text).lower())
 
 
 def build_chunks(parsed: dict, max_chars: int = 900) -> list[dict]:

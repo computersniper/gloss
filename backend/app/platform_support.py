@@ -1,4 +1,4 @@
-"""Cross-platform paths and local CLI command resolution for Gloss."""
+"""Cross-platform paths and local CLI command resolution for GlossX."""
 
 from __future__ import annotations
 
@@ -15,6 +15,9 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+
+# Keep the preview cache separate from the Gloss 1.x runtime cache.
+CACHE_APP_DIR_NAME = "GlossX"
 
 _WINDOWS_CREATE_NEW_PROCESS_GROUP = getattr(
     subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
@@ -184,9 +187,9 @@ def default_cache_dir(
     home = home or Path.home()
     if _is_windows(platform_name):
         base = Path(env.get("LOCALAPPDATA") or home / "AppData" / "Local")
-        return base / "Gloss" / "cache"
+        return base / CACHE_APP_DIR_NAME / "cache"
     base = Path(env.get("XDG_CACHE_HOME") or home / ".cache")
-    return base / "gloss"
+    return base / CACHE_APP_DIR_NAME
 
 
 def resolve_data_dir(
@@ -205,7 +208,19 @@ def resolve_data_dir(
     except OSError:
         pass
 
-    return default_data_dir(platform_name, env, home).expanduser().resolve(), False
+    gloss_dir = default_data_dir(platform_name, env, home).expanduser().resolve()
+    preview_dir = (
+        gloss_dir.parent.parent / "GlossX" / "data"
+        if _is_windows(platform_name)
+        else gloss_dir.with_name("GlossX")
+    )
+    # Prefer the classic installation when both contain data. A preview-only
+    # installation can continue in place, including any absolute workspace paths.
+    if any((gloss_dir / name).is_file() for name in ("moonlight.db", "config.json")):
+        return gloss_dir, False
+    if any((preview_dir / name).is_file() for name in ("moonlight.db", "config.json")):
+        return preview_dir.resolve(), False
+    return gloss_dir, False
 
 
 def venv_python(repo_root: Path, platform_name: str = sys.platform) -> Path:
@@ -224,7 +239,7 @@ def _resolve_npm_node_shim(
     except OSError:
         return None
     match = re.search(
-        r'(?:%dp0%|\$basedir)[\\/]+([^"\r\n]+?\.js)', text, re.IGNORECASE
+        r'(?:%dp0%|\$basedir)[\\/]+([^"\r\n]+?\.(?:js|exe))', text, re.IGNORECASE
     )
     if not match:
         return None
@@ -232,6 +247,8 @@ def _resolve_npm_node_shim(
     script = shim_path.parent.joinpath(*relative_parts)
     if not script.is_file():
         return None
+    if script.suffix.lower() == ".exe":
+        return [str(script)]
     bundled_node = shim_path.parent / "node.exe"
     node = str(bundled_node) if bundled_node.is_file() else (which("node.exe") or which("node"))
     if not node:
@@ -261,3 +278,112 @@ def resolve_cli_command(
             "command shim. Reinstall the CLI with npm or put its executable on PATH."
         )
     return [path]
+
+
+# ---------------------------------------------------------------------------
+# GlossX home (``~/.glossx``) and the system ``git`` binary
+# ---------------------------------------------------------------------------
+def glossx_home(env: Mapping[str, str] = os.environ, home: Path | None = None) -> Path:
+    """The user's GlossX agent home (``GLOSSX_HOME`` overrides ``~/.glossx``)."""
+    explicit = (env.get("GLOSSX_HOME") or "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return ((home or Path.home()) / ".glossx").resolve()
+
+
+def hidden_subprocess_options(platform_name: str = sys.platform) -> dict:
+    """Options for short helper processes: no console window on Windows."""
+    if _is_windows(platform_name):
+        return {"creationflags": _WINDOWS_CREATE_NO_WINDOW}
+    return {}
+
+
+_GIT_ENV_DROP = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_PREFIX",
+    "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+)
+_git_cache: dict = {"ts": 0.0, "path": None}
+
+
+def git_executable(which: Callable[[str], str | None] = shutil.which) -> str | None:
+    """Path of the system ``git`` binary, or ``None`` when git is not installed.
+
+    The lookup is cached briefly (PATH scans are slow on Windows) but not
+    forever, so installing git does not need a restart.
+    """
+    if which is not shutil.which:
+        return which("git")
+    now = time.monotonic()
+    if _git_cache["path"] is None or now - _git_cache["ts"] > 30.0:
+        _git_cache["path"] = which("git") or ""
+        _git_cache["ts"] = now
+    return _git_cache["path"] or None
+
+
+def git_environment(
+    cwd: Path | None = None, env: Mapping[str, str] = os.environ
+) -> dict[str, str]:
+    """Environment for non-interactive git: never prompts, stable C messages,
+    and never picks up a repository above ``cwd``'s parent."""
+    out = {k: v for k, v in env.items() if k.upper() not in _GIT_ENV_DROP}
+    out.update(
+        GIT_TERMINAL_PROMPT="0",
+        GIT_ASKPASS="echo",
+        SSH_ASKPASS="echo",
+        GCM_INTERACTIVE="never",
+        GIT_PAGER="cat",
+        PAGER="cat",
+        GIT_EDITOR="true",
+        GIT_MERGE_AUTOEDIT="no",
+        GIT_OPTIONAL_LOCKS="0",
+        LC_ALL="C",
+        LANGUAGE="C",
+    )
+    if cwd is not None:
+        out["GIT_CEILING_DIRECTORIES"] = str(Path(cwd).parent)
+    return out
+
+
+def run_git(
+    args: list[str],
+    cwd: Path,
+    *,
+    timeout: float = 60.0,
+    input_text: str | None = None,
+    config: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    """Run ``git <args>`` in ``cwd`` without a console window or prompts.
+
+    Returns the completed process with **decoded** ``stdout`` / ``stderr``
+    (UTF-8, undecodable bytes replaced). Raises ``FileNotFoundError`` when git
+    is not installed and ``TimeoutError`` when the command does not finish.
+    """
+    git = git_executable()
+    if not git:
+        raise FileNotFoundError("git is not installed or not on PATH")
+    argv = [git]
+    for key, value in (config or {}).items():
+        argv += ["-c", f"{key}={value}"]
+    argv += list(args)
+    try:
+        done = subprocess.run(
+            argv,
+            cwd=str(cwd),
+            env=git_environment(Path(cwd)),
+            input=None if input_text is None else input_text.encode("utf-8"),
+            stdin=subprocess.DEVNULL if input_text is None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            **hidden_subprocess_options(),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise TimeoutError(f"git {args[0] if args else ''} timed out after {timeout:g}s") from error
+    return subprocess.CompletedProcess(
+        argv,
+        done.returncode,
+        (done.stdout or b"").decode("utf-8", errors="replace"),
+        (done.stderr or b"").decode("utf-8", errors="replace"),
+    )

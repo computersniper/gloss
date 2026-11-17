@@ -8,7 +8,7 @@ import json
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -92,6 +92,8 @@ class ChatBody(Override):
     chat_id: str | None = None
     messages: list[ChatMessage]
     selection: str | None = None
+    # side chat of an agent thread: it reads a recap of that thread, never writes to it
+    session_id: str | None = None
 
 
 @router.post("/papers/{paper_id}/summarize")
@@ -233,9 +235,16 @@ async def autohighlight(paper_id: str, body: Override):
 
 
 @router.post("/chat")
-async def chat(body: ChatBody):
+async def chat(body: ChatBody, request: Request):
     messages = [m.model_dump() for m in body.messages]
     paper_id = body.paper_id
+    main_context = None
+    if body.session_id:
+        manager = getattr(request.app.state, "sessions", None)
+        try:
+            main_context = manager.digest(body.session_id) if manager else None
+        except Exception:  # noqa: BLE001 - a missing thread only drops the recap
+            main_context = None
     if body.chat_id:
         chat_record = store.get_chat(body.chat_id)
         if not chat_record:
@@ -262,6 +271,7 @@ async def chat(body: ChatBody):
                         chat_id=body.chat_id,
                         session_state=session_state,
                         selection=body.selection,
+                        main_context=main_context,
                         language=body.language,
                         provider=body.provider,
                         model=body.model,

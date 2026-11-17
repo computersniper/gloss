@@ -4,6 +4,16 @@
 
 ---
 
+## v2.0.0-beta.1
+
+- 经典论文阅读器新增 GlossX 研究工作台，可在应用顶部切换。工作台支持 Agent 会话、研究项目、可引用的论文资料与带 Git 历史的工作区。
+- 延续 Gloss 的安装入口和本地论文库，并支持通过数据目录设置打开 GlossX 预览版的库。
+- 从 Gloss 的后续开发中保留论文标签与阅读视角、视觉解释和 Markdown 笔记。
+
+*Gloss adds the GlossX research workbench and keeps the classic reader as the first-launch mode. This prerelease keeps the existing install channels and can open a Gloss 1.x library or a GlossX preview library.*
+
+---
+
 ## v1.0.2 — 2026-07-30
 
 这一版让论文分析任务更透明、更可控，并进一步完善了插件市场、独立设置与本地发布体验。

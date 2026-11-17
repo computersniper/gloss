@@ -55,9 +55,9 @@ function cacheDir() {
   if (process.env.GLOSS_CACHE_DIR) return path.resolve(process.env.GLOSS_CACHE_DIR);
   if (IS_WINDOWS) {
     const local = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
-    return path.join(local, "Gloss", "cache");
+    return path.join(local, "GlossX", "cache");
   }
-  return path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "gloss");
+  return path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "glossx");
 }
 
 function setupEnv() {
@@ -234,10 +234,13 @@ async function start() {
     fail(`port ${port} on ${host} is already in use. Set GLOSS_PORT or pass --port <number>.`);
   }
   console.log(`Gloss: http://127.0.0.1:${port}`);
+  if (host === "0.0.0.0" || host === "::") {
+    console.log("    Phones and tablets: open the GlossX app and use the address and pairing code from Settings > Mobile access.");
+  }
   const child = spawn(
     VENV_PYTHON,
     ["-m", "uvicorn", "app.main:app", "--host", host, "--port", String(port)],
-    { cwd: BACKEND, env: process.env, stdio: "inherit", shell: false, detached: !IS_WINDOWS },
+    { cwd: BACKEND, env: { ...process.env, GLOSS_BIND_HOST: host, GLOSS_BIND_PORT: String(port) }, stdio: "inherit", shell: false, detached: !IS_WINDOWS },
   );
   supervise([{ child, name: "backend" }]);
 }

@@ -31,7 +31,7 @@ def test_linux_uses_xdg_directories(platform_support) -> None:
         "/srv/user-data/gloss"
     )
     assert platform_support.default_cache_dir("linux", env, Path("/home/alice")) == Path(
-        "/srv/user-cache/gloss"
+        "/srv/user-cache/GlossX"
     )
 
 
@@ -40,7 +40,7 @@ def test_linux_falls_back_to_home_directories(platform_support) -> None:
         "/home/alice/.local/share/gloss"
     )
     assert platform_support.default_cache_dir("linux", {}, Path("/home/alice")) == Path(
-        "/home/alice/.cache/gloss"
+        "/home/alice/.cache/GlossX"
     )
 
 
@@ -52,7 +52,7 @@ def test_windows_uses_local_app_data(platform_support) -> None:
     ) == PureWindowsPath(r"C:\Users\Alice\AppData\Local\Gloss\data")
     assert PureWindowsPath(
         platform_support.default_cache_dir("win32", env, Path(r"C:\Users\Alice"))
-    ) == PureWindowsPath(r"C:\Users\Alice\AppData\Local\Gloss\cache")
+    ) == PureWindowsPath(r"C:\Users\Alice\AppData\Local\GlossX\cache")
 
 
 def test_windows_provider_processes_never_open_a_console_window(platform_support) -> None:
@@ -110,6 +110,35 @@ def test_empty_legacy_data_uses_platform_default(tmp_path: Path, platform_suppor
 
     assert resolved == (tmp_path / ".local" / "share" / "gloss").resolve()
     assert used_legacy is False
+
+
+@pytest.mark.parametrize("platform_name", ["win32", "linux", "darwin"])
+def test_upgrade_selects_existing_library_without_combining_data(tmp_path, platform_support, platform_name):
+    env = {"LOCALAPPDATA": str(tmp_path), "XDG_DATA_HOME": str(tmp_path)}
+    if platform_name == "win32":
+        classic = tmp_path / "Gloss" / "data"
+        preview = tmp_path / "GlossX" / "data"
+    else:
+        classic = tmp_path / "gloss"
+        preview = tmp_path / "GlossX"
+    legacy = tmp_path / "backend" / "data"
+
+    preview.mkdir(parents=True)
+    (preview / "moonlight.db").write_bytes(b"preview")
+    assert platform_support.resolve_data_dir(platform_name, env, tmp_path, legacy) == (
+        preview.resolve(), False
+    )
+
+    classic.mkdir(parents=True)
+    (classic / "moonlight.db").write_bytes(b"classic")
+    assert platform_support.resolve_data_dir(platform_name, env, tmp_path, legacy) == (
+        classic.resolve(), False
+    )
+    assert platform_support.resolve_data_dir(
+        platform_name, {**env, "GLOSS_DATA_DIR": str(preview)}, tmp_path, legacy
+    ) == (preview.resolve(), False)
+    assert (classic / "moonlight.db").read_bytes() == b"classic"
+    assert (preview / "moonlight.db").read_bytes() == b"preview"
 
 
 def test_virtual_environment_python_is_platform_specific(tmp_path: Path, platform_support) -> None:
@@ -237,8 +266,13 @@ def test_provider_process_termination_reaps_process_tree(tmp_path: Path, platfor
     async def exercise() -> None:
         pid_file = tmp_path / "child.pid"
         alive_file = tmp_path / "child-survived.txt"
+        release_file = tmp_path / "release-child"
+        ready_file = tmp_path / "child-ready"
         child_code = (
-            "import pathlib,time; time.sleep(1); "
+            "import pathlib,time; "
+            f"pathlib.Path({str(ready_file)!r}).write_text('ready'); "
+            f"release=pathlib.Path({str(release_file)!r}); "
+            "exec('while not release.exists(): time.sleep(0.01)'); "
             f"pathlib.Path({str(alive_file)!r}).write_text('alive')"
         )
         parent_code = (
@@ -256,13 +290,14 @@ def test_provider_process_termination_reaps_process_tree(tmp_path: Path, platfor
             **platform_support.subprocess_group_options(),
         )
         for _ in range(50):
-            if pid_file.exists():
+            if pid_file.exists() and ready_file.exists():
                 break
             await asyncio.sleep(0.02)
-        assert pid_file.exists(), "parent did not start its child"
+        assert pid_file.exists() and ready_file.exists(), "parent and child handshake failed"
         await platform_support.terminate_process_tree(process)
         assert process.returncode is not None
-        await asyncio.sleep(1.2)
+        release_file.write_text("release", encoding="utf-8")
+        await asyncio.sleep(0.5)
         assert not alive_file.exists(), "provider descendant survived timeout cleanup"
 
     asyncio.run(exercise())

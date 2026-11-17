@@ -1,5 +1,6 @@
 import type { PluginConfigurationProperty, PluginManifest } from "../api/client";
 import { useStore } from "../store";
+import { ModelOptions } from "../modelCatalog";
 
 interface FeatureDescriptor {
   id: string;
@@ -152,14 +153,14 @@ export function FeatureSettingsEditor({ cfg, providers, saving, setCfg, onSave }
         provider: "AI Provider", global: "使用全局 Provider", model: "模型", modelHint: "留空时使用 Provider 默认模型",
         effort: "推理强度", context: "论文上下文", full: "每次发送完整论文", shared: "省 Token：复用论文会话",
         custom: "插件专属设置", noCustom: "此功能没有额外配置。通用 AI 设置仍会独立保存。",
-        save: "保存此功能设置", hostManaged: "这些通用设置由 Gloss 自动提供；插件作者无需重复声明。",
+        save: "保存此功能设置", hostManaged: "这些通用设置由 GlossX 自动提供；插件作者无需重复声明。",
       }
     : {
         general: "General settings", heading: "Plugins & features", core: "Built-in features", installed: "Installed plugins",
         provider: "AI provider", global: "Use global provider", model: "Model", modelHint: "Leave blank to use the provider default",
         effort: "Reasoning effort", context: "Paper context", full: "Send the full paper for each task", shared: "Save tokens: reuse the paper session",
         custom: "Extension settings", noCustom: "This feature has no additional settings. Its common AI settings are still saved independently.",
-        save: "Save feature settings", hostManaged: "Gloss supplies these common settings automatically; extension authors do not need to declare them.",
+        save: "Save feature settings", hostManaged: "GlossX supplies these common settings automatically; extension authors do not need to declare them.",
       };
 
   return (
@@ -200,7 +201,8 @@ export function FeatureSettingsEditor({ cfg, providers, saving, setCfg, onSave }
           </div>
           <div className="feature-setting-row">
             <label>{text.model}</label>
-            <input value={settings.model || ""} placeholder={text.modelHint} onChange={(event) => patch({ model: event.target.value })} />
+            <input list="feature-model-suggestions" value={settings.model || ""} placeholder={text.modelHint} onChange={(event) => patch({ model: event.target.value })} />
+            <ModelOptions id="feature-model-suggestions" provider={settings.provider || cfg.provider || "local_codex"} />
           </div>
           <div className="feature-setting-row">
             <label>{text.effort}</label>

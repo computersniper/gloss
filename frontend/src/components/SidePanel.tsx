@@ -4,6 +4,7 @@ import { SummaryPanel } from "./SummaryPanel";
 import { ExplainPanel } from "./ExplainPanel";
 import { TranslatePanel } from "./TranslatePanel";
 import { ChatPanel } from "./ChatPanel";
+import { AgentPanel } from "./AgentPanel";
 import { HighlightsPanel } from "./HighlightsPanel";
 import { ReferencesPanel } from "./ReferencesPanel";
 import { ScholarPanel } from "./ScholarPanel";
@@ -33,6 +34,7 @@ const TABS: TabDefinition[] = [
   { id: "notes", en: "Notes", zh: "我的笔记", C: PersonalNotesPanel },
   { id: "mindmap", en: "Mind Map", zh: "思维导图", C: MindMapPanel },
   { id: "chat", en: "Chat", zh: "对话", C: ChatPanel },
+  { id: "agent", en: "Agent", zh: "智能体", C: AgentPanel },
   { id: "explain", en: "Explain", zh: "解释", C: ExplainPanel },
   { id: "translate", en: "Translate", zh: "翻译", C: TranslatePanel },
   { id: "tex", en: "TeX", zh: "TeX 源码", C: TexPanel, arxivOnly: true },
@@ -44,7 +46,12 @@ const TABS: TabDefinition[] = [
   { id: "settings", en: "Settings", zh: "设置", C: SettingsPanel },
 ];
 
-export function SidePanel() {
+// Tabs that GlossX hosts in their own workbench panes; the AI pane's
+// "Paper tools" shows the rest.
+const WORKBENCH_HOSTED = new Set(["chat", "agent", "scholar", "extensions", "settings"]);
+
+/** Classic right-hand side panel. `variant="tools"` = GlossX "Paper tools". */
+export function SidePanel({ variant = "classic" }: { variant?: "classic" | "tools" } = {}) {
   const activeTab = useStore((s) => s.activeTab);
   const setTab = useStore((s) => s.setTab);
   const askAboutText = useStore((s) => s.askAboutText);
@@ -69,23 +76,27 @@ export function SidePanel() {
     ...TABS.slice(0, extensionIndex),
     ...pluginTabs,
     ...TABS.slice(extensionIndex),
-  ].filter((t) => !t.arxivOnly || !!current?.arxiv_id);
+  ]
+    .filter((t) => !t.arxivOnly || !!current?.arxiv_id)
+    .filter((t) => variant === "classic" || !WORKBENCH_HOSTED.has(t.id));
+  // fall back to the first tab if the active one is not in this variant
+  const shown = tabs.some((t) => t.id === activeTab) ? activeTab : tabs[0]?.id;
 
   function onMouseUp(e: React.MouseEvent) {
     // don't offer "add to chat" from within the chat/settings tabs themselves
-    if (activeTab === "chat" || activeTab === "settings") return setAsk(null);
+    if (shown === "chat" || shown === "settings") return setAsk(null);
     const text = window.getSelection()?.toString().trim() || "";
     if (text.length < 2) return setAsk(null);
     setAsk({ x: e.clientX, y: e.clientY, text });
   }
 
   return (
-    <div className="side-panel">
+    <div className={`side-panel${variant === "tools" ? " paper-tools" : ""}`}>
       <div className="tabs">
         {tabs.map((t) => (
           <button
             key={t.id}
-            className={`tab${t.plugin ? " plugin-tab" : ""}${activeTab === t.id ? " active" : ""}`}
+            className={`tab${t.plugin ? " plugin-tab" : ""}${shown === t.id ? " active" : ""}`}
             onClick={() => setTab(t.id)}
           >
             {t.plugin && <span className="plugin-tab-icon" aria-hidden="true">{t.icon}</span>}
@@ -99,7 +110,7 @@ export function SidePanel() {
         {tabs.map((t) => {
           const C = t.C;
           return (
-            <div key={t.id} className="tab-pane" style={{ display: activeTab === t.id ? "flex" : "none" }}>
+            <div key={t.id} className="tab-pane" style={{ display: shown === t.id ? "flex" : "none" }}>
               {t.plugin ? <PluginPanel plugin={t.plugin} /> : C ? <C /> : null}
             </div>
           );

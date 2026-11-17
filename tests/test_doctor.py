@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 """In-app Doctor environment and self-check API."""
 
 
@@ -7,7 +10,9 @@ def test_doctor_reports_local_installation_without_exposing_secrets(client):
     report = response.json()
 
     assert report["status"] in {"pass", "warning", "fail"}
-    assert report["version"] == "1.0.3"
+    root = Path(__file__).resolve().parent.parent
+    package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    assert report["version"] == package["version"]
     assert report["summary"]["passed"] >= 1
     assert report["system"]["paper_count"] >= 0
     assert report["system"]["plugin_count"] >= 0

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launcher for the Gloss CLI (uses the project venv).
+# Launcher for the GlossX CLI (uses the project venv).
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="$ROOT/backend/.venv/bin/python"
 [ -x "$PY" ] || PY="python3"

@@ -1,18 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../store";
+import { desktop } from "../desktop";
 
-declare global {
-  interface Window {
-    pywebview?: {
-      api?: {
-        cancel_exit?: () => Promise<boolean>;
-        confirm_exit?: (dontAskAgain: boolean) => Promise<boolean>;
-      };
-    };
-  }
-}
-
-const EXIT_REQUEST_EVENT = "gloss:close-request";
+const EXIT_REQUEST_EVENT = "glossx:close-request";
 
 export function ExitConfirmDialog() {
   const uiLang = useStore((state) => state.uiLang);
@@ -37,7 +27,7 @@ export function ExitConfirmDialog() {
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setOpen(false);
-      void window.pywebview?.api?.cancel_exit?.();
+      void desktop?.cancelExit();
     };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
@@ -47,13 +37,13 @@ export function ExitConfirmDialog() {
 
   const cancel = async () => {
     setOpen(false);
-    await window.pywebview?.api?.cancel_exit?.();
+    await desktop?.cancelExit();
   };
 
   const confirm = async () => {
     setExiting(true);
     try {
-      await window.pywebview?.api?.confirm_exit?.(dontAskAgain);
+      await desktop?.confirmExit(dontAskAgain);
     } catch {
       setExiting(false);
     }
@@ -65,7 +55,7 @@ export function ExitConfirmDialog() {
       <section className="exit-dialog" role="dialog" aria-modal="true" aria-labelledby="exit-dialog-title">
         <div className="exit-dialog-icon" aria-hidden>!</div>
         <div className="exit-dialog-content">
-          <h2 id="exit-dialog-title">{zh ? "退出 Gloss？" : "Quit Gloss?"}</h2>
+          <h2 id="exit-dialog-title">{zh ? "退出 GlossX？" : "Quit GlossX?"}</h2>
           <p>{zh ? "退出应用会中断尚未完成的工作：" : "Quitting will interrupt unfinished work:"}</p>
           <ul>
             <li>{zh
@@ -89,7 +79,7 @@ export function ExitConfirmDialog() {
           <div className="exit-dialog-actions">
             <button ref={cancelButton} onClick={() => void cancel()} disabled={exiting}>{zh ? "取消" : "Cancel"}</button>
             <button className="danger" onClick={() => void confirm()} disabled={exiting}>
-              {exiting ? (zh ? "正在退出…" : "Quitting…") : (zh ? "退出 Gloss" : "Quit Gloss")}
+              {exiting ? (zh ? "正在退出…" : "Quitting…") : (zh ? "退出 GlossX" : "Quit GlossX")}
             </button>
           </div>
         </div>

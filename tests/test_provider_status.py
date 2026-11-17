@@ -54,7 +54,9 @@ def test_local_codex_connection_uses_fast_login_status(
         captured["kwargs"] = kwargs
         return Process()
 
-    monkeypatch.setattr(local_codex, "resolve_cli_command", lambda _name: ["codex"])
+    async def command():
+        return ["codex"]
+    monkeypatch.setattr(local_codex, "_command", command)
     monkeypatch.setattr(local_codex, "ensure_codex_sandbox", lambda: tmp_path)
     monkeypatch.setattr(local_codex, "subprocess_group_options", lambda: {"creationflags": 1})
     monkeypatch.setattr(local_codex.asyncio, "create_subprocess_exec", create)
@@ -64,4 +66,4 @@ def test_local_codex_connection_uses_fast_login_status(
     assert captured["args"] == ("codex", "login", "status")
     assert captured["kwargs"]["cwd"] == str(tmp_path)
     assert captured["kwargs"]["creationflags"] == 1
-    assert reply == "Logged in using ChatGPT"
+    assert reply == "Logged in using ChatGPT\nCLI: codex"

@@ -1,0 +1,35 @@
+{
+  "api_version": 2,
+  "id": "team-review",
+  "kind": "workflow",
+  "name": "Team Review",
+  "version": "1.0.0",
+  "author": "GlossX",
+  "description": "An agent team reviews several papers: one reader per paper, a critic cross-checks their findings for conflicts and weak support, readers answer the critic's challenges, then a writer synthesises a cited review.",
+  "permissions": ["library:read", "ai:complete"],
+  "capability": {
+    "card": "Team review of several papers: parallel readers, a critic that cross-checks conflicting or unsupported findings, a rebuttal round, then a cited synthesis.",
+    "input": {"question": "string", "max_papers": "integer"},
+    "output": {"report": "markdown", "conflicts": "list", "claims": "claim[] with span_ids"}
+  },
+  "steps": [
+    {"id": "plan", "use": "agent.planner"},
+    {"id": "find", "use": "library.search", "map_over": "plan.queries",
+     "args": {"query": "{{item}}", "k": 8}, "depends_on": ["plan"]},
+    {"id": "screen", "use": "decider.screen", "args": {"max_candidates": 10, "max_accept": 6},
+     "depends_on": ["find"]},
+    {"id": "read", "use": "agent.reader", "map_over": "screen.accepted",
+     "args": {"paper_id": "{{item.paper_id}}", "question": "{{goal}}"},
+     "context": "shared_session", "depends_on": ["screen"]},
+    {"id": "critic", "use": "agent.critic", "args": {"readings": "{{read}}", "question": "{{goal}}"},
+     "depends_on": ["read"]},
+    {"id": "rebut", "use": "agent.reader", "map_over": "critic.challenges",
+     "args": {"paper_id": "{{item.paper_id}}", "question": "{{item.question}}"},
+     "context": "shared_session", "depends_on": ["critic"]},
+    {"id": "verify", "use": "agent.verifier", "depends_on": ["rebut"]},
+    {"id": "write", "use": "agent.writer", "depends_on": ["verify"],
+     "args": {"instructions": "Synthesise the team's findings into a short review organised by theme, naming the paper behind every point. Where the critic found a conflict, present both sides with their citations and say which the evidence favours after the readers' answers; if it stays open, say so."}}
+  ],
+  "loop": {"use": "loop:plan-execute-verify", "stop": {"coverage": 0.8, "max_rounds": 2}},
+  "agent": {"name": "Review Team", "icon": "👥"}
+}

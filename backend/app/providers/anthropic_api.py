@@ -7,7 +7,7 @@ from typing import AsyncIterator
 import httpx
 
 from ..config import load_config
-from .base import Message, Provider
+from .base import Message, Provider, anthropic_usage, normalize_usage, report_stream_usage
 
 
 def _cfg() -> dict:
@@ -59,7 +59,23 @@ class AnthropicProvider(Provider):
             "stream": stream,
         }
         if system:
-            body["system"] = system
+            # Separate tool appendix gets its own breakpoint; no native tools
+            # are sent because GlossX executes its text protocol under approval.
+            head, marker, tail = system.partition("# Tools\n")
+            body["system"] = [{"type": "text", "text": head, "cache_control": {"type": "ephemeral"}}] if head.strip() else []
+            if marker:
+                # Tools/skills/subagents end before project instruction blocks.
+                boundaries = [tail.find(label) for label in ("\n\n# Global instructions", "\n\n# Project instructions", "\n\n# Project\n") if label in tail]
+                boundary = min(boundaries) if boundaries else len(tail)
+                body["system"].append({"type": "text", "text": marker + tail[:boundary], "cache_control": {"type": "ephemeral"}})
+                if tail[boundary:]:
+                    body["system"].append({"type": "text", "text": tail[boundary:], "cache_control": {"type": "ephemeral"}})
+        if len(msgs) > 1:
+            stable = msgs[-2]
+            if isinstance(stable["content"], str):
+                stable["content"] = [{"type": "text", "text": stable["content"]}]
+            if stable["content"]:
+                stable["content"][-1]["cache_control"] = {"type": "ephemeral"}
         return body
 
     async def complete(self, system, messages, model=None):
@@ -76,15 +92,12 @@ class AnthropicProvider(Provider):
             b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
         )
         u = data.get("usage", {})
-        usage = {
-            "prompt_tokens": u.get("input_tokens", 0),
-            "completion_tokens": u.get("output_tokens", 0),
-            "total_tokens": u.get("input_tokens", 0) + u.get("output_tokens", 0),
-        }
+        usage = normalize_usage(anthropic_usage(u), system, messages, text)
         return text, usage
 
     async def stream(self, system, messages, model=None) -> AsyncIterator[str]:
         c = _cfg()
+        usage = {}
         async with httpx.AsyncClient(timeout=c.get("timeout", 300), trust_env=False) as client:
             async with client.stream(
                 "POST",
@@ -103,6 +116,12 @@ class AnthropicProvider(Provider):
                         evt = json.loads(payload)
                     except json.JSONDecodeError:
                         continue
+                    if evt.get("type") == "message_start":
+                        usage.update((evt.get("message") or {}).get("usage") or {})
+                    elif evt.get("type") == "message_delta":
+                        usage.update(evt.get("usage") or {})
+                    if usage:
+                        report_stream_usage({**anthropic_usage(usage), "_complete": evt.get("type") == "message_stop"})
                     if evt.get("type") == "content_block_delta":
                         d = evt.get("delta", {})
                         if d.get("type") == "text_delta":

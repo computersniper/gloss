@@ -14,7 +14,10 @@ import fitz  # PyMuPDF
 
 
 def ingest_pdf(pdf_path: str | Path) -> dict[str, Any]:
-    doc = fitz.open(str(pdf_path))
+    try:
+        doc = fitz.open(str(pdf_path))
+    except (fitz.FileDataError, RuntimeError) as error:
+        raise ValueError(f"The PDF is damaged or unreadable: {error}") from error
     pages: list[dict] = []
     full_parts: list[str] = []
     block_uid = 0

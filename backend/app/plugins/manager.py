@@ -1009,12 +1009,16 @@ def _preflight_failure(manifest: dict[str, Any], parsed: dict[str, Any]) -> dict
 
 
 def validate_manifest(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate a v1 analysis-plugin manifest or a declarative v2 manifest."""
     if not isinstance(payload, dict):
         raise ValueError("plugin manifest must be an object")
     api_version = payload.get("api_version", PLUGIN_API_VERSION)
+    if api_version == PLUGIN_API_VERSION_V2:
+        return validate_manifest_v2(payload)
     if api_version != PLUGIN_API_VERSION:
         raise ValueError(
-            f"unsupported plugin api_version {api_version}; expected {PLUGIN_API_VERSION}"
+            f"unsupported plugin api_version {api_version}; expected "
+            f"{PLUGIN_API_VERSION} or {PLUGIN_API_VERSION_V2}"
         )
     plugin_id = _clean_text(payload.get("id"), "id", maximum=64)
     if not _ID.fullmatch(plugin_id) or plugin_id.startswith("core."):
@@ -1116,6 +1120,270 @@ def validate_manifest(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Manifest v2 (GlossX): declarative capabilities and workflows. Third-party v2
+# manifests never contain code: a workflow is a composition of existing
+# capabilities, and an agent/tool manifest is a prompt over a paper.
+# ---------------------------------------------------------------------------
+PLUGIN_API_VERSION_V2 = 2
+V2_KINDS = {
+    "tool", "agent", "workflow", "loop", "decider", "source", "memory", "provider", "view",
+    # GlossX harness kinds: slash commands, prompt skills, lifecycle hooks and
+    # MCP server declarations (hooks/MCP only run once the user trusts the plugin)
+    "command", "skill", "hook", "mcp",
+}
+V2_HOOK_EVENTS = {"pre_tool_use", "post_tool_use", "session_start", "stop"}
+V2_PERMISSIONS = {
+    "paper:read", "ai:complete", "library:read", "library:write", "search:web",
+    "network", "llm", "memory:read", "memory:write", "code:execute", "remote:ssh",
+    "mcp:call",
+}
+V2_CONTEXT_MODES = {"shared_session", "full"}
+V2_MAX_STEPS = 24
+V2_CARD_WORDS = 30
+_STEP_ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_USE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_MAP_OVER = re.compile(r"^([a-z][a-z0-9_-]{0,31})((?:\.[A-Za-z0-9_]{1,64}){1,4})$")
+
+
+def _v2_schema_map(raw: Any, field: str) -> dict[str, str]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > 32:
+        raise ValueError(f"plugin {field} must be an object of at most 32 fields")
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        key = str(key)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", key):
+            raise ValueError(f"plugin {field} has an invalid field name: {key}")
+        out[key] = _clean_text(value, f"{field}.{key}", maximum=200)
+    return out
+
+
+def _v2_json_value(value: Any, field: str, depth: int = 0) -> Any:
+    """Static step args: JSON scalars, lists and objects only."""
+    if depth > 4:
+        raise ValueError(f"plugin {field} is nested too deeply")
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        if len(value) > 2000:
+            raise ValueError(f"plugin {field} is too long")
+        return value
+    if isinstance(value, list):
+        if len(value) > 50:
+            raise ValueError(f"plugin {field} has too many items")
+        return [_v2_json_value(v, field, depth + 1) for v in value]
+    if isinstance(value, dict):
+        if len(value) > 32:
+            raise ValueError(f"plugin {field} has too many fields")
+        return {str(k)[:64]: _v2_json_value(v, field, depth + 1) for k, v in value.items()}
+    raise ValueError(f"plugin {field} must be JSON data")
+
+
+def _v2_steps(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("workflow manifests need a non-empty steps list")
+    if len(raw) > V2_MAX_STEPS:
+        raise ValueError(f"workflow manifests may have at most {V2_MAX_STEPS} steps")
+    steps: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"steps[{index}] must be an object")
+        unknown = set(item) - {"id", "use", "args", "map_over", "fallback", "context", "depends_on"}
+        if unknown:
+            raise ValueError(f"steps[{index}] has unsupported fields: {', '.join(sorted(unknown))}")
+        step_id = str(item.get("id") or "").strip()
+        if not _STEP_ID.fullmatch(step_id):
+            raise ValueError(f"steps[{index}].id must be a short lowercase identifier")
+        if step_id in seen:
+            raise ValueError(f"duplicate step id: {step_id}")
+        use = str(item.get("use") or "").strip()
+        if not _USE.fullmatch(use):
+            raise ValueError(f"steps[{index}].use must name a capability")
+        args = item.get("args") or {}
+        if not isinstance(args, dict):
+            raise ValueError(f"steps[{index}].args must be an object")
+        fallback = item.get("fallback") or []
+        if not isinstance(fallback, list) or len(fallback) > 5:
+            raise ValueError(f"steps[{index}].fallback must be a list of at most 5 capabilities")
+        fallback = [str(f).strip() for f in fallback]
+        if any(not _USE.fullmatch(f) for f in fallback):
+            raise ValueError(f"steps[{index}].fallback must name capabilities")
+        context = item.get("context") or "full"
+        if context not in V2_CONTEXT_MODES:
+            raise ValueError(f"steps[{index}].context must be shared_session or full")
+        depends_on = item.get("depends_on") or []
+        if not isinstance(depends_on, list):
+            raise ValueError(f"steps[{index}].depends_on must be a list")
+        depends_on = list(dict.fromkeys(str(d) for d in depends_on))
+        for dep in depends_on:
+            # dependencies must point at earlier steps, which also rules out cycles
+            if dep not in seen:
+                raise ValueError(f"step {step_id} depends on unknown or later step: {dep}")
+        map_over = item.get("map_over")
+        if map_over is not None:
+            match = _MAP_OVER.fullmatch(str(map_over))
+            if not match or match.group(1) not in seen:
+                raise ValueError(
+                    f"step {step_id} map_over must be '<earlier step id>.<field>'"
+                )
+            map_over = str(map_over)
+        steps.append({
+            "id": step_id,
+            "use": use,
+            "args": _v2_json_value(args, f"steps[{index}].args"),
+            "map_over": map_over,
+            "fallback": fallback,
+            "context": context,
+            "depends_on": depends_on,
+        })
+        seen.add(step_id)
+    return steps
+
+
+def _v2_loop(raw: Any) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("plugin loop must be an object")
+    use = str(raw.get("use") or "loop:plan-execute-verify").strip()
+    if not re.fullmatch(r"(loop:)?[a-z][a-z0-9-]{0,39}", use):
+        raise ValueError("plugin loop.use must be 'loop:<name>'")
+    if not use.startswith("loop:"):
+        use = f"loop:{use}"
+    stop = raw.get("stop") or {}
+    if not isinstance(stop, dict):
+        raise ValueError("plugin loop.stop must be an object")
+    clean_stop: dict[str, Any] = {}
+    if "coverage" in stop:
+        coverage = stop["coverage"]
+        if isinstance(coverage, bool) or not isinstance(coverage, (int, float)) or not 0 <= coverage <= 1:
+            raise ValueError("plugin loop.stop.coverage must be between 0 and 1")
+        clean_stop["coverage"] = float(coverage)
+    if "max_rounds" in stop:
+        rounds = stop["max_rounds"]
+        if isinstance(rounds, bool) or not isinstance(rounds, int) or not 1 <= rounds <= 3:
+            raise ValueError("plugin loop.stop.max_rounds must be an integer between 1 and 3")
+        clean_stop["max_rounds"] = rounds
+    if "patience" in stop:
+        patience = stop["patience"]
+        if isinstance(patience, bool) or not isinstance(patience, int) or not 1 <= patience <= 3:
+            raise ValueError("plugin loop.stop.patience must be an integer between 1 and 3")
+        clean_stop["patience"] = patience
+    for key in ("max_usd",):  # accepted for forward compatibility, not enforced
+        if key in stop and isinstance(stop[key], (int, float)) and not isinstance(stop[key], bool):
+            clean_stop[key] = float(stop[key])
+    return {"use": use, "stop": clean_stop}
+
+
+def validate_manifest_v2(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate a declarative v2 manifest (``kind`` + ``capability`` + ``steps``)."""
+    if not isinstance(payload, dict):
+        raise ValueError("plugin manifest must be an object")
+    if payload.get("api_version") != PLUGIN_API_VERSION_V2:
+        raise ValueError("v2 manifests must declare api_version 2")
+    for forbidden in ("code", "script", "python", "javascript", "entrypoint", "command"):
+        if forbidden in payload:
+            raise ValueError("third-party manifests are declarative and may not contain code")
+    plugin_id = _clean_text(payload.get("id"), "id", maximum=64)
+    if not _ID.fullmatch(plugin_id) or plugin_id.startswith("core."):
+        raise ValueError("plugin id must be a safe lowercase identifier")
+    version = _clean_text(payload.get("version") or "1.0.0", "version", maximum=40)
+    if not _VERSION.fullmatch(version):
+        raise ValueError("plugin version must use semantic versioning")
+    kind = str(payload.get("kind") or "").strip()
+    if kind not in V2_KINDS:
+        raise ValueError(f"plugin kind must be one of: {', '.join(sorted(V2_KINDS))}")
+    name = _clean_text(payload.get("name"), "name", maximum=80)
+    capability = payload.get("capability") or {}
+    if not isinstance(capability, dict):
+        raise ValueError("plugin capability must be an object")
+    unknown = set(capability) - {"card", "input", "output"}
+    if unknown:
+        raise ValueError(f"unsupported capability fields: {', '.join(sorted(unknown))}")
+    description = _clean_text(
+        payload.get("description") or capability.get("card"), "description", maximum=500,
+    )
+    card = " ".join(str(capability.get("card") or description).split())
+    if len(card.split()) > V2_CARD_WORDS:
+        raise ValueError(f"plugin capability.card must be at most {V2_CARD_WORDS} words")
+    permissions = payload.get("permissions") or []
+    if not isinstance(permissions, list):
+        raise ValueError("plugin permissions must be a list")
+    permissions = list(dict.fromkeys(str(item) for item in permissions))
+    unsupported = set(permissions) - V2_PERMISSIONS
+    if unsupported:
+        raise ValueError(f"unsupported plugin permissions: {', '.join(sorted(unsupported))}")
+    steps = _v2_steps(payload.get("steps")) if kind == "workflow" else []
+    if kind != "workflow" and payload.get("steps"):
+        raise ValueError("only workflow manifests may declare steps")
+    prompt = _clean_text(payload.get("prompt"), "prompt", maximum=12000, required=False)
+    if kind in {"command", "skill"} and not prompt:
+        raise ValueError(f"{kind} manifests need a prompt")
+    extra: dict[str, Any] = {}
+    if kind == "agent":
+        tools = payload.get("tools")
+        if tools is not None:
+            if not isinstance(tools, list) or len(tools) > 64:
+                raise ValueError("plugin tools must be a list of at most 64 tool patterns")
+            extra["tools"] = [_clean_text(t, "tools[]", maximum=120) for t in tools]
+        if payload.get("model") is not None:
+            extra["model"] = _clean_text(payload.get("model"), "model", maximum=120)
+    elif kind == "command":
+        hint = payload.get("argument_hint")
+        if hint is not None:
+            extra["argument_hint"] = _clean_text(hint, "argument_hint", maximum=200)
+    elif kind == "hook":
+        hook = payload.get("hook")
+        if not isinstance(hook, dict):
+            raise ValueError("hook manifests need a hook object {event, matcher, command}")
+        event = str(hook.get("event") or "").strip()
+        if event not in V2_HOOK_EVENTS:
+            raise ValueError(f"hook.event must be one of: {', '.join(sorted(V2_HOOK_EVENTS))}")
+        extra["hook"] = {
+            "event": event,
+            "matcher": _clean_text(hook.get("matcher") or "*", "hook.matcher", maximum=200),
+            "command": _clean_text(hook.get("command"), "hook.command", maximum=2000),
+        }
+    elif kind == "mcp":
+        server = payload.get("server")
+        if not isinstance(server, dict):
+            raise ValueError("mcp manifests need a server object {command, args?, env?}")
+        args = server.get("args") or []
+        env = server.get("env") or {}
+        if not isinstance(args, list) or not isinstance(env, dict):
+            raise ValueError("mcp server args must be a list and env an object")
+        extra["server"] = {
+            "command": _clean_text(server.get("command"), "server.command", maximum=1000),
+            "args": [_clean_text(a, "server.args[]", maximum=2000) for a in args[:64]],
+            "env": {str(k)[:128]: str(v)[:2000] for k, v in list(env.items())[:64]},
+        }
+    return {
+        **extra,
+        "api_version": PLUGIN_API_VERSION_V2,
+        "id": plugin_id,
+        "kind": kind,
+        "name": name,
+        "version": version,
+        "author": _clean_text(payload.get("author") or "Community", "author", maximum=80),
+        "description": description,
+        "capability": {
+            "card": card,
+            "input": _v2_schema_map(capability.get("input"), "capability.input"),
+            "output": _v2_schema_map(capability.get("output"), "capability.output"),
+        },
+        "permissions": permissions,
+        "steps": steps,
+        "loop": _v2_loop(payload.get("loop")),
+        "prompt": prompt,
+        "agent": _normalize_agent(payload.get("agent")),
+        "builtin": False,
+    }
+
+
 def _manifest_path(plugin_id: str) -> Path:
     if not _ID.fullmatch(plugin_id) or plugin_id.startswith("core."):
         raise ValueError("invalid plugin id")
@@ -1132,7 +1400,7 @@ def _write_manifest(manifest: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def list_installed() -> list[dict[str, Any]]:
+def _installed_manifests() -> list[dict[str, Any]]:
     installed = []
     if not PLUGINS_DIR.exists():
         return installed
@@ -1144,6 +1412,16 @@ def list_installed() -> list[dict[str, Any]]:
     return installed
 
 
+def list_installed() -> list[dict[str, Any]]:
+    """Installed v1 analysis plugins (the paper-sidebar contract)."""
+    return [m for m in _installed_manifests() if m.get("api_version") == PLUGIN_API_VERSION]
+
+
+def list_installed_v2() -> list[dict[str, Any]]:
+    """Installed declarative v2 manifests (workflows and other GlossX kinds)."""
+    return [m for m in _installed_manifests() if m.get("api_version") == PLUGIN_API_VERSION_V2]
+
+
 def get_installed(plugin_id: str) -> dict[str, Any] | None:
     try:
         path = _manifest_path(plugin_id)
@@ -1152,9 +1430,11 @@ def get_installed(plugin_id: str) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        return validate_manifest(json.loads(read_utf8_text(path)))
+        manifest = validate_manifest(json.loads(read_utf8_text(path)))
     except (OSError, ValueError, json.JSONDecodeError):
         return None
+    # run_plugin and the sidebar only understand v1 analysis plugins
+    return manifest if manifest.get("api_version") == PLUGIN_API_VERSION else None
 
 
 def marketplace_snapshot() -> dict[str, Any]:
@@ -1171,6 +1451,7 @@ def marketplace_snapshot() -> dict[str, Any]:
         "core": CORE_EXTENSIONS,
         "marketplace": marketplace,
         "installed": installed,
+        "installed_v2": list_installed_v2(),
         "coming_soon": COMING_SOON,
     }
 

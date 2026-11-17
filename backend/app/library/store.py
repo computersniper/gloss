@@ -153,6 +153,10 @@ def init_db() -> None:
             con.execute(
                 "ALTER TABLE papers ADD COLUMN reading_lens TEXT NOT NULL DEFAULT 'auto'"
             )
+        usage_columns = {row["name"] for row in con.execute("PRAGMA table_info(ai_usage)")}
+        for column in ("cached_input_tokens", "cache_write_tokens", "reasoning_tokens"):
+            if column not in usage_columns:
+                con.execute(f"ALTER TABLE ai_usage ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
         drawing_columns = {
             row["name"] for row in con.execute("PRAGMA table_info(drawings)").fetchall()
         }
@@ -190,6 +194,9 @@ def record_ai_usage(
     completion_tokens: int,
     total_tokens: int,
     estimated: bool,
+    cached_input_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    reasoning_tokens: int = 0,
 ) -> dict[str, Any]:
     """Persist a single completed provider invocation.
 
@@ -208,6 +215,9 @@ def record_ai_usage(
         "completion_tokens": max(0, int(completion_tokens)),
         "total_tokens": max(0, int(total_tokens)),
         "estimated": bool(estimated),
+        "cached_input_tokens": max(0, min(int(cached_input_tokens), int(prompt_tokens))),
+        "cache_write_tokens": max(0, int(cache_write_tokens)),
+        "reasoning_tokens": max(0, int(reasoning_tokens)),
         "created_at": _now(),
     }
     with _conn() as con:
@@ -215,10 +225,12 @@ def record_ai_usage(
             """
             INSERT INTO ai_usage (
                 id, task_type, provider, model, paper_id, plugin_id,
-                prompt_tokens, completion_tokens, total_tokens, estimated, created_at
+                prompt_tokens, completion_tokens, total_tokens, estimated, created_at,
+                cached_input_tokens, cache_write_tokens, reasoning_tokens
             ) VALUES (
                 :id, :task_type, :provider, :model, :paper_id, :plugin_id,
-                :prompt_tokens, :completion_tokens, :total_tokens, :estimated, :created_at
+                :prompt_tokens, :completion_tokens, :total_tokens, :estimated, :created_at,
+                :cached_input_tokens, :cache_write_tokens, :reasoning_tokens
             )
             """,
             record,
@@ -246,6 +258,9 @@ def ai_usage_summary(
         COALESCE(SUM(total_tokens), 0) AS total_tokens,
         COALESCE(AVG(total_tokens), 0) AS average_total_tokens,
         COALESCE(SUM(estimated), 0) AS estimated_tasks
+        , COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens
+        , COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
+        , COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens
     """
     with _conn() as con:
         total = dict(con.execute(f"SELECT {aggregate} FROM ai_usage{where}", params).fetchone())
@@ -264,10 +279,23 @@ def ai_usage_summary(
                 [*params, max(1, min(int(limit), 200))],
             ).fetchall()
         ]
-    for row in [total, *by_task]:
+        by_provider = [dict(row) for row in con.execute(
+            f"SELECT provider, {aggregate} FROM ai_usage{where} GROUP BY provider ORDER BY total_tokens DESC", params)]
+        by_day = [dict(row) for row in con.execute(
+            f"SELECT date(created_at, 'unixepoch') AS day, {aggregate} FROM ai_usage{where} GROUP BY day ORDER BY day DESC", params)]
+    for row in [total, *by_task, *by_provider, *by_day]:
         row["estimated_tasks"] = int(row["estimated_tasks"])
         row["average_total_tokens"] = round(float(row["average_total_tokens"]), 1)
-    return {"total": total, "by_task": by_task, "recent": recent}
+        row["input_tokens"] = row["prompt_tokens"]
+        row["output_tokens"] = row["completion_tokens"]
+        row["cache_hit_rate"] = row["cached_input_tokens"] / row["prompt_tokens"] if row["prompt_tokens"] else 0.0
+        row["exact"] = row["estimated_tasks"] == 0
+    for row in recent:
+        row["input_tokens"] = row["prompt_tokens"]
+        row["output_tokens"] = row["completion_tokens"]
+        row["cache_hit_rate"] = row["cached_input_tokens"] / row["prompt_tokens"] if row["prompt_tokens"] else 0.0
+        row["exact"] = not bool(row["estimated"])
+    return {"total": total, "by_task": by_task, "by_provider": by_provider, "by_day": by_day, "recent": recent}
 
 
 # ---------------------------------------------------------------------------

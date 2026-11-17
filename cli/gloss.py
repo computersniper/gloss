@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Gloss (旁注) CLI — a thin terminal wrapper over the same backend.
+"""GlossX (旁注) CLI — a thin terminal wrapper over the same backend.
 
 Usage:
   gloss serve                 # start the web app (prints URL)
@@ -52,7 +52,7 @@ def _resolve_paper(idish: str) -> dict:
 def cmd_serve(args):
     import uvicorn
 
-    print(f"💡 Gloss 旁注 → http://{config.HOST}:{config.PORT}")
+    print(f"💡 GlossX 旁注 → http://{config.HOST}:{config.PORT}")
     print("   (open in a browser; Ctrl-C to stop)")
     uvicorn.run("app.main:app", host=config.HOST, port=config.PORT, app_dir=str(_ROOT / "backend"))
 
@@ -131,7 +131,7 @@ def cmd_skills(args):
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="gloss", description="Local AI paper reader")
+    ap = argparse.ArgumentParser(prog="gloss", description="GlossX - local agent-harness paper reader")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("serve").set_defaults(fn=cmd_serve)

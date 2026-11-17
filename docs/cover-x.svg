@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" fill="none" font-family="'Segoe UI', 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d1017"/>
+      <stop offset="1" stop-color="#151a2b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(270 150) scale(420 300)">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="word" x1="430" y1="0" x2="900" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f4f6fb"/>
+      <stop offset="0.63" stop-color="#f4f6fb"/>
+      <stop offset="0.68" stop-color="#c4b5fd"/>
+      <stop offset="0.82" stop-color="#7aa2f7"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" stroke="#ffffff" stroke-opacity="0.035"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="420" rx="24" fill="url(#bg)"/>
+  <rect width="1200" height="420" rx="24" fill="url(#grid)"/>
+  <rect width="1200" height="420" rx="24" fill="url(#glow)"/>
+
+  <!-- mark: the Gloss lamp-lit page with the X of the agent edition -->
+  <g transform="translate(112 76) scale(2.1)">
+  <defs>
+    <linearGradient id="cv-x" x1="59.4" y1="57" x2="85.4" y2="83" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#7aa2f7"/>
+    </linearGradient>
+    <radialGradient id="cv-glow" cx="69.6" cy="25.6" r="24" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
+    </radialGradient>
+    <!-- the page gives way around the X so the two never touch -->
+    <mask id="cv-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="96" height="96">
+      <rect width="96" height="96" fill="#fff"/>
+      <circle cx="72.4" cy="70" r="20.5" fill="#000"/>
+    </mask>
+  </defs>
+  <!-- the Gloss mark: a page lit by a lamp ... -->
+  <circle cx="69.6" cy="25.6" r="24" fill="url(#cv-glow)"/>
+  <g mask="url(#cv-cut)">
+    <rect x="18" y="24" width="46" height="60" rx="6.4" fill="#a78bfa" fill-opacity="0.14" stroke="#7aa2f7" stroke-width="4.6"/>
+    <g stroke="#7aa2f7" stroke-width="4.4" stroke-linecap="round">
+      <line x1="29.2" y1="44" x2="52.8" y2="44"/>
+      <line x1="29.2" y1="56" x2="52.8" y2="56"/>
+      <line x1="29.2" y1="68" x2="44" y2="68"/>
+    </g>
+  </g>
+  <circle cx="69.6" cy="25.6" r="10" fill="#a78bfa"/>
+  <g stroke="#a78bfa" stroke-width="5.2" stroke-linecap="round">
+    <line x1="69.6" y1="6.4" x2="69.6" y2="12"/>
+    <line x1="85.6" y1="10" x2="81.6" y2="14"/>
+    <line x1="89.6" y1="25.6" x2="84" y2="25.6"/>
+    <line x1="84.8" y1="40.8" x2="80.8" y2="37.2"/>
+    <line x1="54.4" y1="10.4" x2="58" y2="14"/>
+  </g>
+  <!-- ... and the X of the agent edition at the page's lower right, centred under the lamp and its rays -->
+  <g stroke="url(#cv-x)" stroke-width="7" stroke-linecap="round">
+    <line x1="59.4" y1="57" x2="85.4" y2="83"/>
+    <line x1="85.4" y1="57" x2="59.4" y2="83"/>
+  </g>
+  </g>
+
+  <!-- wordmark -->
+  <text x="430" y="196" font-size="112" font-weight="700" letter-spacing="-3" fill="url(#word)">GlossX</text>
+  <text x="434" y="246" font-size="24" fill="#aab3c8">An open, plugin-native agent harness for research and learning</text>
+  <text x="434" y="284" font-size="21" fill="#7f8aa3">旁注 · 面向科研与学习的开放 Agent Harness</text>
+
+  <!-- capability chips -->
+  <g font-size="17" fill="#c9d1e4">
+    <g transform="translate(434 318)">
+      <rect width="118" height="36" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#ffffff" stroke-opacity="0.12"/>
+      <text x="59" y="24" text-anchor="middle">Read papers</text>
+    </g>
+    <g transform="translate(564 318)">
+      <rect width="132" height="36" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#ffffff" stroke-opacity="0.12"/>
+      <text x="66" y="24" text-anchor="middle">Agent sessions</text>
+    </g>
+    <g transform="translate(708 318)">
+      <rect width="142" height="36" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#ffffff" stroke-opacity="0.12"/>
+      <text x="71" y="24" text-anchor="middle">Verified claims</text>
+    </g>
+    <g transform="translate(862 318)">
+      <rect width="158" height="36" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#ffffff" stroke-opacity="0.12"/>
+      <text x="79" y="24" text-anchor="middle">Git workspaces</text>
+    </g>
+    <g transform="translate(1032 318)">
+      <rect width="96" height="36" rx="18" fill="#a78bfa" fill-opacity="0.16" stroke="#a78bfa" stroke-opacity="0.45"/>
+      <text x="48" y="24" text-anchor="middle" fill="#ddd6fe">Plugins</text>
+    </g>
+  </g>
+</svg>

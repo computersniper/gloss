@@ -337,13 +337,13 @@ export function ChatPanel() {
         {msgs.length === 0 && !streamed && <div className="muted">{T.empty}</div>}
         {msgs.map((m, i) => (
           <div key={i} className={"msg " + m.role}>
-            <div className="msg-role">{m.role === "user" ? "you" : "gloss"}</div>
+            <div className="msg-role">{m.role === "user" ? "you" : "GlossX"}</div>
             {m.role === "assistant" ? <Markdown text={m.content} /> : <UserMsg content={m.content} attachments={m.attachments} />}
           </div>
         ))}
         {streamed && (
           <div className="msg assistant">
-            <div className="msg-role">gloss</div>
+            <div className="msg-role">GlossX</div>
             <Markdown text={streamed} />
           </div>
         )}

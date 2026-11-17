@@ -51,7 +51,8 @@ def test_usage_api_groups_tasks_and_marks_fallbacks(client, monkeypatch):
     assert payload["total"]["total_tokens"] > 18
     assert payload["total"]["average_total_tokens"] > 0
     assert payload["total"]["estimated_tasks"] == 1
-    assert payload["by_task"] == [
+    legacy_keys = {"task_type", "tasks", "prompt_tokens", "completion_tokens", "total_tokens", "average_total_tokens", "estimated_tasks"}
+    assert [{k: v for k, v in row.items() if k in legacy_keys} for row in payload["by_task"]] == [
         {
             "task_type": "usage-test",
             "tasks": 2,

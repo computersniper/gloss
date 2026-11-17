@@ -1,4 +1,9 @@
-"""Native Windows entry point for the self-contained Gloss desktop app."""
+"""Backend entry point of the Gloss desktop app.
+
+The Electron shell in ``desktop/`` starts this frozen program, waits for the
+address it reports, and shows the app in its own window. Run on its own it
+serves the app for a regular browser.
+"""
 
 from __future__ import annotations
 
@@ -17,84 +22,9 @@ from typing import Any
 
 
 APP_NAME = "Gloss"
-APP_VERSION = "1.0.3"
+APP_VERSION = "2.0.0-beta.1"
 STARTUP_TIMEOUT_SECONDS = 30
 MIN_FALLBACK_PORT = 1024
-EXIT_REQUEST_EVENT = "gloss:close-request"
-
-
-def _exit_confirmation_enabled() -> bool:
-    from app.config import load_config
-
-    return bool(load_config().get("confirm_exit", True))
-
-
-def _disable_future_exit_confirmation() -> None:
-    from app.config import save_config
-
-    save_config({"confirm_exit": False})
-
-
-class DesktopBridge:
-    """Coordinate the native close button with the React confirmation dialog."""
-
-    def __init__(self) -> None:
-        self._window: Any | None = None
-        self._allow_close = False
-        self._prompt_open = False
-        self._lock = threading.Lock()
-
-    def bind(self, window: Any) -> None:
-        self._window = window
-
-    def on_closing(self) -> bool | None:
-        with self._lock:
-            if self._allow_close or not _exit_confirmation_enabled():
-                return None
-            # If React has not loaded yet, do not trap the user in a window that
-            # cannot display the custom confirmation dialog.
-            if self._window is None or not self._window.events.loaded.is_set():
-                return None
-            if not self._prompt_open:
-                self._prompt_open = True
-                threading.Thread(
-                    target=self._dispatch_close_request,
-                    name="gloss-close-prompt",
-                    daemon=True,
-                ).start()
-        # pywebview cancels a closing event when a handler returns False.
-        return False
-
-    def _dispatch_close_request(self) -> None:
-        try:
-            assert self._window is not None
-            self._window.evaluate_js(
-                f"window.dispatchEvent(new CustomEvent('{EXIT_REQUEST_EVENT}'))"
-            )
-        except Exception:
-            logging.exception("Could not display the Gloss exit confirmation")
-            with self._lock:
-                self._prompt_open = False
-
-    def cancel_exit(self) -> bool:
-        with self._lock:
-            self._prompt_open = False
-        return True
-
-    def confirm_exit(self, dont_ask_again: bool = False) -> bool:
-        if dont_ask_again:
-            try:
-                _disable_future_exit_confirmation()
-            except Exception:
-                logging.exception("Could not disable future exit confirmations")
-        with self._lock:
-            self._allow_close = True
-            self._prompt_open = False
-        if self._window is not None:
-            self._window.destroy()
-        return True
-
-
 def _ensure_standard_streams() -> None:
     """Give windowed PyInstaller builds safe sinks for CLI-only arguments."""
     if sys.stdout is None:
@@ -158,7 +88,7 @@ def _select_available_port(host: str, preferred_port: int) -> int:
     for port in candidates:
         if _port_available(host, port):
             return port
-    raise RuntimeError("Gloss could not find an available local port.")
+    raise RuntimeError("GlossX could not find an available local port.")
 
 
 def _health_url(url: str) -> str:
@@ -189,7 +119,7 @@ def _start_server(app: Any, host: str, port: int) -> tuple[Any, threading.Thread
         log_config=None,
     )
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, name="gloss-backend", daemon=True)
+    thread = threading.Thread(target=server.run, name="glossx-backend", daemon=True)
     thread.start()
     return server, thread
 
@@ -210,41 +140,17 @@ def _run_headless(server: Any, server_thread: threading.Thread) -> int:
     return 0
 
 
-def _run_desktop(url: str, storage_path: Path) -> None:
-    import webview
-
-    storage_path.mkdir(parents=True, exist_ok=True)
-    icon_path = _resource_root() / "packaging" / "gloss.ico"
-    bridge = DesktopBridge()
-    webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
-    window = webview.create_window(
-        "Gloss · 旁注",
-        url=url,
-        js_api=bridge,
-        width=1500,
-        height=950,
-        min_size=(1024, 720),
-        resizable=True,
-        background_color="#111820",
-        text_select=True,
-        zoomable=True,
-    )
-    bridge.bind(window)
-    window.events.closing += bridge.on_closing
-    start_options: dict[str, Any] = {
-        "debug": False,
-        "storage_path": str(storage_path),
-    }
-    if sys.platform == "win32":
-        # Preserve the packaged Windows application's Edge WebView2 backend.
-        start_options.update(gui="edgechromium", icon=str(icon_path))
-    webview.start(**start_options)
+def _report_ready(url: str) -> None:
+    """Tell the desktop shell where the backend actually listens."""
+    ready_file = os.environ.get("GLOSSX_READY_FILE")
+    if ready_file:
+        Path(ready_file).write_text(url, encoding="utf-8")
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="Gloss.exe",
-        description="Start the Gloss desktop paper-reading companion.",
+        prog="glossx-backend",
+        description="Start the local Gloss server used by the desktop app.",
     )
     parser.add_argument("--host", default=os.environ.get("GLOSS_HOST", "127.0.0.1"))
     parser.add_argument(
@@ -256,10 +162,53 @@ def _parser() -> argparse.ArgumentParser:
         "--no-browser",
         dest="headless",
         action="store_true",
-        help="run only the local server (for diagnostics)",
+        help="accepted for compatibility; the backend never opens a window",
     )
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {APP_VERSION}")
+    parser.add_argument("--browser-smoke", type=Path, metavar="REPORT", help="verify bundled CDP modules with an isolated browser profile")
     return parser
+
+
+def _browser_smoke(report_path: Path) -> int:
+    import asyncio
+    import json
+    import tempfile
+    from app.harness.browser.process import BrowserProcess
+    from app.harness.browser.proxy import GuardProxy
+
+    async def verify() -> dict:
+        with tempfile.TemporaryDirectory(prefix="glossx-bundle-browser-") as temporary:
+            # Launch exactly as the app does, behind the guard proxy.
+            proxy = GuardProxy()
+            browser = BrowserProcess(Path(temporary))
+            browser.proxy_port = await proxy.start()
+            process = None
+            try:
+                client = await browser.start()
+                process = browser.process
+                target = await client.call("Target.createTarget", {"url": "about:blank"})
+                attached = await client.call("Target.attachToTarget", {"targetId": target["targetId"], "flatten": True})
+                session_id = attached["sessionId"]
+                await client.call("Runtime.evaluate", {"expression": "document.body.innerHTML='<h1>GlossX</h1><button>Bundle verified</button>'"}, session_id=session_id)
+                tree = await client.call("Accessibility.getFullAXTree", session_id=session_id)
+                assert any(node.get("name", {}).get("value") == "Bundle verified" for node in tree["nodes"]), "AX tree missing fixture button"
+                frame = await client.call("Page.captureScreenshot", {"format": "png"}, session_id=session_id)
+                assert len(frame.get("data", "")) > 100, "empty browser screenshot"
+                result = {"browser": browser.executable.browser, "ax_nodes": len(tree["nodes"]), "screenshot_bytes_base64": len(frame["data"])}
+            finally:
+                await browser.close()
+                await proxy.close()
+            assert process is not None and process.returncode is not None, "browser did not exit"
+            result["process_exit_code"] = process.returncode
+            return result
+
+    try:
+        result = {"ok": True, **asyncio.run(verify())}
+    except Exception as exc:
+        result = {"ok": False, "error": str(exc)}
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return 0 if result["ok"] else 1
 
 
 def main() -> int:
@@ -271,47 +220,40 @@ def main() -> int:
         return 2
 
     _prepare_imports()
+    if args.browser_smoke:
+        return _browser_smoke(args.browser_smoke)
     log_path = _configure_logging()
 
     try:
-        from app.config import CACHE_DIR
         from app.main import app
 
+        from app import remote_access
+
+        host_explicit = "--host" in sys.argv[1:] or bool(os.environ.get("GLOSS_HOST"))
+        args.host, args.port = remote_access.launch_target(args.host, args.port, host_explicit)
+        os.environ["GLOSS_BIND_HOST"] = args.host
         requested_port = args.port
         args.port = _select_available_port(args.host, requested_port)
         if args.port != requested_port:
             logging.info(
-                "Port %s was occupied; starting Gloss on port %s instead",
+                "Port %s was occupied; starting GlossX on port %s instead",
                 requested_port,
                 args.port,
             )
 
+        os.environ["GLOSS_BIND_PORT"] = str(args.port)
         browser_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
         url = f"http://{browser_host}:{args.port}"
         server, server_thread = _start_server(app, args.host, args.port)
         if not _wait_until_ready(url, server_thread):
             _stop_server(server, server_thread)
-            raise RuntimeError("The local Gloss server did not become ready in time.")
+            raise RuntimeError("The local GlossX server did not become ready in time.")
 
-        if args.headless:
-            return _run_headless(server, server_thread)
-
-        try:
-            _run_desktop(url, CACHE_DIR / "webview")
-        finally:
-            _stop_server(server, server_thread)
-        return 0
+        _report_ready(url)
+        return _run_headless(server, server_thread)
     except Exception as exc:
-        logging.exception("Gloss desktop startup failed")
-        message = (
-            f"Gloss could not start.\n\n{exc}\n\n"
-            "Microsoft Edge WebView2 Runtime is required. "
-            f"Details were written to:\n{log_path}"
-        )
-        if args.headless:
-            print(message, file=sys.stderr)
-        else:
-            _show_error(message)
+        logging.exception("GlossX backend startup failed")
+        print(f"GlossX could not start.\n\n{exc}\n\nDetails were written to:\n{log_path}", file=sys.stderr)
         return 1
 
 

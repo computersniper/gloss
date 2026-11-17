@@ -1,0 +1,31 @@
+{
+  "name": "glossx-desktop",
+  "productName": "Gloss",
+  "version": "2.0.0-beta.1",
+  "private": true,
+  "description": "Gloss desktop shell",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win portable --x64 --publish never"
+  },
+  "dependencies": {
+    "ws": "8.18.0"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "io.github.computersniper.glossx",
+    "productName": "Gloss",
+    "directories": { "output": "../dist/desktop" },
+    "files": ["main.js", "bridge.js", "preload.js", "package.json"],
+    "extraResources": [
+      { "from": "../dist/glossx-backend", "to": "backend" },
+      { "from": "../packaging/gloss.ico", "to": "gloss.ico" }
+    ],
+    "win": { "icon": "../packaging/gloss.ico" },
+    "portable": { "artifactName": "Gloss.exe", "unpackDirName": true }
+  }
+}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Literal
 
@@ -10,7 +11,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from ..library import importers, service, store
+from ..agent import projects
+from ..library import documents, importers, service, store
 from ..library.import_jobs import (
     ImportCleanupError,
     ImportJobManager,
@@ -56,12 +58,16 @@ async def list_papers():
 @router.post("/upload")
 async def upload_paper(file: UploadFile = File(...)):
     data = await file.read()
+    meta = {"source": "upload", "title": ""}
     try:
-        paper = await run_in_threadpool(
-            service.create_from_pdf_bytes, data, {"source": "upload", "title": ""}
-        )
+        if data[:5] != b"%PDF-" and documents.is_supported(file.filename or ""):
+            # Markdown, text, HTML and slides are rendered to a PDF so their spans stay clickable
+            data, title = await run_in_threadpool(documents.to_pdf, file.filename or "", data)
+            meta = {"source": "document", "title": title}
+        paper = await run_in_threadpool(service.create_from_pdf_bytes, data, meta)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    await run_in_threadpool(_seed_paper_project, paper["id"])
     return paper
 
 
@@ -98,6 +104,7 @@ async def import_paper(body: ImportBody):
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
+    await run_in_threadpool(_seed_paper_project, paper["id"])
     return paper
 
 
@@ -165,6 +172,7 @@ async def patch_paper(paper_id: str, body: PaperPatch):
 async def delete_paper(paper_id: str):
     if not store.get_paper(paper_id):
         raise HTTPException(404, "paper not found")
+    projects.forget_paper(paper_id)
     store.delete_paper(paper_id)
     return {"ok": True}
 
@@ -234,3 +242,24 @@ async def get_fulltext(paper_id: str):
     if not parsed:
         raise HTTPException(404, "parsed data not found")
     return {"full_text": parsed["full_text"]}
+
+
+def _seed_paper_project(paper_id: str) -> None:
+    try:
+        projects.ensure_paper_project_quietly(store.get_paper(paper_id))
+    except Exception:
+        logging.getLogger(__name__).exception("Could not create workspace for paper %s", paper_id)
+
+
+@router.get("/{paper_id}/project")
+async def get_paper_project(paper_id: str):
+    try:
+        paper = store.get_paper(paper_id)
+        if not paper:
+            raise LookupError("paper not found")
+        project, _ = await run_in_threadpool(projects.ensure_paper_project, paper)
+        from ..harness import vcs
+        vcs.ensure_repo_in_background(project["id"])
+        return projects.workspace_detail(project)
+    except LookupError as error:
+        raise HTTPException(404, str(error)) from error

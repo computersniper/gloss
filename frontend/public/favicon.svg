@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none">
+  <defs>
+    <linearGradient id="gx-x" x1="59.4" y1="57" x2="85.4" y2="83" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#7aa2f7"/>
+    </linearGradient>
+    <radialGradient id="gx-glow" cx="69.6" cy="25.6" r="24" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
+    </radialGradient>
+    <!-- the page gives way around the X so the two never touch -->
+    <mask id="gx-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="96" height="96">
+      <rect width="96" height="96" fill="#fff"/>
+      <circle cx="72.4" cy="70" r="20.5" fill="#000"/>
+    </mask>
+  </defs>
+  <!-- the Gloss mark: a page lit by a lamp ... -->
+  <circle cx="69.6" cy="25.6" r="24" fill="url(#gx-glow)"/>
+  <g mask="url(#gx-cut)">
+    <rect x="18" y="24" width="46" height="60" rx="6.4" fill="#a78bfa" fill-opacity="0.14" stroke="#7aa2f7" stroke-width="4.6"/>
+    <g stroke="#7aa2f7" stroke-width="4.4" stroke-linecap="round">
+      <line x1="29.2" y1="44" x2="52.8" y2="44"/>
+      <line x1="29.2" y1="56" x2="52.8" y2="56"/>
+      <line x1="29.2" y1="68" x2="44" y2="68"/>
+    </g>
+  </g>
+  <circle cx="69.6" cy="25.6" r="10" fill="#a78bfa"/>
+  <g stroke="#a78bfa" stroke-width="5.2" stroke-linecap="round">
+    <line x1="69.6" y1="6.4" x2="69.6" y2="12"/>
+    <line x1="85.6" y1="10" x2="81.6" y2="14"/>
+    <line x1="89.6" y1="25.6" x2="84" y2="25.6"/>
+    <line x1="84.8" y1="40.8" x2="80.8" y2="37.2"/>
+    <line x1="54.4" y1="10.4" x2="58" y2="14"/>
+  </g>
+  <!-- ... and the X of the agent edition at the page's lower right, centred under the lamp and its rays -->
+  <g stroke="url(#gx-x)" stroke-width="7" stroke-linecap="round">
+    <line x1="59.4" y1="57" x2="85.4" y2="83"/>
+    <line x1="85.4" y1="57" x2="59.4" y2="83"/>
+  </g>
+</svg>

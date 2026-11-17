@@ -1,0 +1,33 @@
+{
+  "api_version": 2,
+  "id": "cross-paper-qa",
+  "kind": "workflow",
+  "name": "Cross-Paper QA",
+  "version": "1.0.0",
+  "author": "GlossX",
+  "description": "Answer a multi-hop question that spans several papers: find the relevant library papers, read each in parallel, gather passages per sub-question and write a verified, cited answer.",
+  "permissions": ["library:read", "ai:complete"],
+  "capability": {
+    "card": "Answer a question that needs several papers: find relevant library papers, read each in parallel, compare them and cite every claim to a passage.",
+    "input": {"question": "string"},
+    "output": {"answer": "markdown", "claims": "claim[] with span_ids"}
+  },
+  "steps": [
+    {"id": "plan", "use": "agent.planner"},
+    {"id": "find", "use": "library.search", "map_over": "plan.queries",
+     "args": {"query": "{{item}}", "k": 6}, "depends_on": ["plan"]},
+    {"id": "screen", "use": "decider.screen", "args": {"max_candidates": 8, "max_accept": 5},
+     "depends_on": ["find"]},
+    {"id": "read", "use": "agent.reader", "map_over": "screen.accepted",
+     "args": {"paper_id": "{{item.paper_id}}", "question": "{{goal}}"},
+     "context": "shared_session", "depends_on": ["screen"]},
+    {"id": "passages", "use": "paper.search_spans", "map_over": "plan.sub_questions",
+     "args": {"query": "{{item}}", "paper_ids": "{{screen.accepted.paper_id}}", "k": 4},
+     "depends_on": ["screen"]},
+    {"id": "verify", "use": "agent.verifier", "depends_on": ["read", "passages"]},
+    {"id": "write", "use": "agent.writer", "depends_on": ["verify"],
+     "args": {"instructions": "Answer the question directly in the first sentence. Then compare what each paper says, naming the paper for every point, and state where the papers agree, disagree or report numbers that are not comparable. If one hop of the question is not answered by the evidence, say which."}}
+  ],
+  "loop": {"use": "loop:plan-execute-verify", "stop": {"coverage": 0.8, "max_rounds": 2}},
+  "agent": {"name": "Cross-Reader", "icon": "🔗"}
+}

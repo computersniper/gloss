@@ -124,12 +124,12 @@ async def fetch_pdf_url(url: str) -> tuple[dict, bytes]:
         return {"source": "url"}, resp.content
 
 
-async def fetch_doi(doi: str) -> tuple[dict, bytes | None]:
+async def fetch_doi(doi: str, *, client_factory=None) -> tuple[dict, bytes | None]:
     """Crossref metadata; try to grab an open-access PDF link if present."""
     doi = doi.strip().replace("https://doi.org/", "")
     meta: dict = {"source": "doi", "doi": doi}
     pdf_bytes: bytes | None = None
-    async with external_client(timeout=60) as client:
+    async with (client_factory or external_client)(timeout=60) as client:
         try:
             r = await client.get(f"https://api.crossref.org/works/{doi}")
             r.raise_for_status()

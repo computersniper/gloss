@@ -27,7 +27,19 @@ from .base import (
     ProviderSessionUnavailableError,
     render_transcript,
     runtime_option,
+    anthropic_usage,
+    normalize_usage,
+    report_stream_usage,
+    communicate_lines,
+    report_progress,
+    wants_progress,
 )
+
+async def _command() -> list[str]:
+    from ..cli_discovery import select_command
+    configured = str(load_config()["providers"]["local_claude"].get("cli_path") or "")
+    return await asyncio.to_thread(select_command, "claude", configured)
+
 
 CLAUDE_SHORT = ("sonnet", "opus", "haiku", "fable")
 
@@ -117,7 +129,8 @@ class LocalClaudeProvider(Provider):
 
     async def test_connection(self) -> str:
         """Check subscription login without launching a full Claude inference."""
-        cmd = resolve_cli_command("claude") + ["auth", "status", "--json"]
+        cmd = await _command()
+        cmd += ["auth", "status", "--json"]
         env, cwd = _sandbox_env()
         proc = None
         try:
@@ -191,9 +204,14 @@ class LocalClaudeProvider(Provider):
         image_dir, image_paths = _materialize_message_images(messages)
         prompt = render_transcript(messages) + _image_prompt_suffix(image_paths)
         model = _pick_model(model)
-        cmd = resolve_cli_command("claude") + [
+        cmd = await _command()
+        # With someone watching, stream events so thinking shows up as it happens;
+        # the final ``result`` event carries the same fields as ``json`` output.
+        live = wants_progress()
+        cmd += [
             "-p",
-            "--output-format", "json",
+            *(["--output-format", "stream-json", "--verbose", "--include-partial-messages"] if live
+              else ["--output-format", "json"]),
             "--tools", "Read" if image_paths else "",
             "--model", model,
         ]
@@ -226,10 +244,22 @@ class LocalClaudeProvider(Provider):
                 cwd=cwd,
                 **subprocess_group_options(),
             )
+            result: dict = {}
+
+            def on_line(line: bytes) -> None:
+                evt = json.loads(line)
+                if evt.get("type") == "result":
+                    result.update(evt)
+                else:
+                    _report_event(evt)
+
             try:
-                out, err = await asyncio.wait_for(
-                    proc.communicate(prompt.encode()), timeout=_timeout()
-                )
+                if live:
+                    out, err = await communicate_lines(proc, prompt.encode(), _timeout(), on_line)
+                else:
+                    out, err = await asyncio.wait_for(
+                        proc.communicate(prompt.encode()), timeout=_timeout()
+                    )
             except asyncio.TimeoutError:
                 await terminate_process_tree(proc)
                 raise RuntimeError(f"claude CLI timed out after {_timeout()}s")
@@ -239,20 +269,17 @@ class LocalClaudeProvider(Provider):
                 if session_id and _session_is_unavailable(detail):
                     raise ClaudeSessionUnavailableError(detail)
                 raise RuntimeError(f"claude CLI exited {proc.returncode}: {detail}")
-            data = json.loads(out.decode())
+            data = result if live else json.loads(out.decode())
+            if live and not data:
+                detail = (err + b"\n" + out).decode(errors="replace")[-2000:]
+                raise RuntimeError(f"claude CLI reported no result: {detail}")
             if data.get("is_error"):
                 detail = str(data.get("result", ""))[:2000]
                 if session_id and _session_is_unavailable(detail):
                     raise ClaudeSessionUnavailableError(detail)
                 raise RuntimeError(detail)
             usage = data.get("usage", {}) or {}
-            norm = {
-                "prompt_tokens": usage.get("input_tokens", 0)
-                + usage.get("cache_read_input_tokens", 0)
-                + usage.get("cache_creation_input_tokens", 0),
-                "completion_tokens": usage.get("output_tokens", 0),
-            }
-            norm["total_tokens"] = norm["prompt_tokens"] + norm["completion_tokens"]
+            norm = normalize_usage(anthropic_usage(usage), system, messages, data.get("result", ""))
             return data.get("result", ""), norm, data.get("session_id") or session_id
         finally:
             if proc is not None and proc.returncode is None:
@@ -272,7 +299,8 @@ class LocalClaudeProvider(Provider):
         image_dir, image_paths = _materialize_message_images(messages)
         prompt = render_transcript(messages) + _image_prompt_suffix(image_paths)
         model = _pick_model(model)
-        cmd = resolve_cli_command("claude") + [
+        cmd = await _command()
+        cmd += [
             "-p",
             "--output-format", "stream-json",
             "--include-partial-messages",
@@ -319,6 +347,8 @@ class LocalClaudeProvider(Provider):
                 except json.JSONDecodeError:
                     continue
                 partial, full = _extract_delta(evt)
+                if evt.get("type") == "result":
+                    report_stream_usage(anthropic_usage(evt.get("usage")))
                 if partial:
                     saw_partial = True
                     streamed_any = True
@@ -344,10 +374,28 @@ class LocalClaudeProvider(Provider):
 
         if not streamed_any:
             # Fallback: blocking completion, chunked out.
-            text, _ = await self.complete(system, messages, model)
+            text, usage = await self.complete(system, messages, model)
+            report_stream_usage(usage)
             step = 24
             for i in range(0, len(text), step):
                 yield text[i : i + step]
+
+
+def _report_event(evt: dict) -> None:
+    """Report thinking deltas and tool use from a claude stream-json event."""
+    if evt.get("type") == "stream_event":
+        inner = evt.get("event", {}) or {}
+        if inner.get("type") == "content_block_delta":
+            delta = inner.get("delta", {}) or {}
+            if delta.get("type") == "thinking_delta":
+                report_progress("thinking", str(delta.get("thinking") or ""))
+        return
+    if evt.get("type") == "assistant":
+        for block in (evt.get("message", {}) or {}).get("content", []) or []:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                args = block.get("input") or {}
+                detail = next((str(args[k]) for k in ("file_path", "path", "command", "pattern", "url", "query") if args.get(k)), "")
+                report_progress("step", f"{block.get('name') or 'Tool'} {detail}".strip())
 
 
 def _extract_delta(evt: dict) -> tuple[str, str]:
