@@ -408,10 +408,12 @@ MARKETPLACE = [
                         "default": "auto",
                         "description": (
                             "Auto uses Codex subscription image generation when the Codex CLI is available. "
-                            "OpenAI is an explicit API-key-backed option."
+                            "The active Codex runtime/provider must expose image_gen. OpenAI is an explicit "
+                            "API-key-backed option."
                         ),
                         "description_zh": (
-                            "自动模式在 Codex CLI 可用时使用订阅内置生图；OpenAI 是需配置 API Key 的显式选项。"
+                            "自动模式在 Codex CLI 可用时使用订阅内置生图，且当前 Codex 运行时/Provider 需暴露 "
+                            "image_gen；OpenAI 是需配置 API Key 的显式选项。"
                         ),
                         "order": 5,
                     },

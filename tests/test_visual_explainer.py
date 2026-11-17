@@ -122,7 +122,7 @@ def test_codex_image_gen_uses_writable_ephemeral_job_and_validates_bitmap(
     result = asyncio.run(codex_images.generate_images(["grounded diagram"], quality="high"))
 
     args = calls[0]["args"]
-    assert args[:2] == ("codex", "exec")
+    assert args[:4] == ("codex", "--enable", "image_generation", "exec")
     assert (args[args.index("-s")], args[args.index("-s") + 1]) == ("-s", "workspace-write")
     assert "--ephemeral" in args
     assert "built-in image_gen tool exactly once" in calls[0]["prompt"]
@@ -151,6 +151,36 @@ def test_codex_image_gen_surfaces_rate_limit_without_fake_fallback(
     )
 
     with pytest.raises(RuntimeError, match=r"rate-limited \(HTTP 429\)"):
+        asyncio.run(codex_images.generate_images(["frame one"]))
+
+
+def test_codex_image_gen_reports_last_message_when_no_bitmap_is_copied(
+    tmp_path: Path, monkeypatch
+):
+    from app.providers import codex_images
+
+    class Process:
+        pid = 123
+        returncode = 0
+
+        def __init__(self, args):
+            self.args = args
+
+        async def communicate(self, _prompt: bytes):
+            result = Path(self.args[self.args.index("-o") + 1])
+            result.write_text("image_gen is unavailable in this session", encoding="utf-8")
+            return b"", b""
+
+    async def create(*args, **_kwargs):
+        return Process(args)
+
+    monkeypatch.setattr(codex_images, "ensure_codex_sandbox", lambda: tmp_path)
+    monkeypatch.setattr(codex_images, "resolve_cli_command", lambda _name: ["codex"])
+    monkeypatch.setattr(codex_images, "subprocess_group_options", lambda: {})
+    monkeypatch.setattr(codex_images, "load_config", lambda: {"providers": {"local_codex": {}}})
+    monkeypatch.setattr(codex_images.asyncio, "create_subprocess_exec", create)
+
+    with pytest.raises(RuntimeError, match="image_gen is unavailable in this session"):
         asyncio.run(codex_images.generate_images(["frame one"]))
 
 

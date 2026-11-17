@@ -50,6 +50,13 @@ def _error_summary(stdout: bytes, stderr: bytes) -> str:
     return " | ".join(messages[-4:])[:1200]
 
 
+def _last_message(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()[:1200]
+    except OSError:
+        return ""
+
+
 def _worker_prompt(image_prompt: str, destination: Path, quality: str) -> str:
     detail = {
         "low": "fast draft with a clean, readable composition",
@@ -81,6 +88,7 @@ async def _generate_one(prompt: str, quality: str, index: int) -> GeneratedImage
         destination = job / "visual-output.png"
         result_path = job / "codex-result.txt"
         command = resolve_cli_command("codex") + [
+            "--enable", "image_generation",
             "exec",
             "--skip-git-repo-check",
             "-s", "workspace-write",
@@ -116,8 +124,11 @@ async def _generate_one(prompt: str, quality: str, index: int) -> GeneratedImage
                 suffix = f": {detail}" if detail else ""
                 raise RuntimeError(f"Codex image_gen failed{suffix}")
             if not destination.is_file():
+                detail = _last_message(result_path) or _error_summary(stdout, stderr)
+                suffix = f": {detail}" if detail else ""
                 raise RuntimeError(
                     "Codex image_gen completed without copying a generated bitmap into Gloss"
+                    f"{suffix}"
                 )
             content = destination.read_bytes()
             extension, media_type = image_type(content)
