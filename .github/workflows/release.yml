@@ -122,6 +122,7 @@ jobs:
         with:
           files: release-assets/*
           generate_release_notes: true
+          draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
 

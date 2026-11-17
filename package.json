@@ -29,7 +29,7 @@
   "bugs": {
     "url": "https://github.com/computersniper/gloss/issues"
   },
-  "homepage": "https://github.com/computersniper/gloss#readme",
+  "homepage": "https://computersniper.github.io/gloss-site/",
   "scripts": {
     "setup": "node scripts/gloss.mjs setup",
     "start": "node scripts/gloss.mjs start",

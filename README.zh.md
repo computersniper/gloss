@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://computersniper.github.io/gloss-site/"><b>官网</b></a> ·
   <a href="./README.md"><b>English</b></a> ·
   <a href="#-快速开始"><b>快速开始</b></a> ·
   <a href="#-功能一览"><b>功能</b></a> ·
@@ -75,7 +76,7 @@
   </tr>
 </table>
 
-<sub>截图来自用测试模型驱动的真实会话（输入框里显示为 <code>fake</code>）。</sub>
+<sub>部分工作台截图使用测试模型演示。Attention 示例展示 [arXiv 正式原文](https://arxiv.org/abs/1706.03762)。</sub>
 
 模型可以是本机的 **Claude Code CLI**、本机的 **Codex CLI**、**Anthropic API**，或 **任意 OpenAI 兼容端点**。
 
@@ -174,7 +175,7 @@ npx gloss-local@next
 需要 Git、Node.js 20.19+（推荐用 24） 和 Python 3.11+：
 
 ```bash
-git clone https://github.com/computersniper/gloss.git
+git clone --branch glossX-integration https://github.com/computersniper/gloss.git
 cd gloss
 npm run setup
 npm start
@@ -292,12 +293,12 @@ Gloss 2.0 默认沿用经典 Gloss 的论文库、配置和文件目录：
 
 ## 📖 经典 Gloss 模式
 
-经典 Gloss 阅读器的截图（上游项目为 [computersniper/gloss](https://github.com/computersniper/gloss)）：
+Gloss 2.0 中保留的经典阅读器：
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="./docs/reader-summary.png" alt="经典 Gloss 阅读器：论文 PDF 旁展示 AI 生成的结构化摘要" />
+      <img src="./docs/screenshots/classic-attention.png" alt="经典 Gloss 阅读器：论文 PDF 旁展示 AI 生成的结构化摘要" />
     </td>
     <td width="25%" valign="top">
       <img src="./docs/app-mindmap.png" alt="经典 Gloss 交互式思维导图与论文概念详情面板" />

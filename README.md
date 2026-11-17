@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://computersniper.github.io/gloss-site/"><b>Website</b></a> ·
   <a href="./README.zh.md"><b>中文</b></a> ·
   <a href="#-quick-start"><b>Quick start</b></a> ·
   <a href="#-features"><b>Features</b></a> ·
@@ -75,7 +76,7 @@ Read PDFs, annotate papers, and ask questions with links back to the source. In 
   </tr>
 </table>
 
-<sub>Screenshots are from real sessions driven by a test model (shown as <code>fake</code> in the composer).</sub>
+<sub>Some workbench screenshots use a deterministic demonstration provider. The Attention example displays the [original arXiv paper](https://arxiv.org/abs/1706.03762).</sub>
 
 Models can be your local **Claude Code CLI**, your local **Codex CLI**, the **Anthropic API**, or
 **any OpenAI-compatible endpoint**.
@@ -179,7 +180,7 @@ If you use Gloss 1.x, close it and back up its data directory first. See [Data l
 Requires Git, Node.js 20.19+ (24 recommended) and Python 3.11+:
 
 ```bash
-git clone https://github.com/computersniper/gloss.git
+git clone --branch glossX-integration https://github.com/computersniper/gloss.git
 cd gloss
 npm run setup
 npm start
@@ -301,13 +302,12 @@ Close the older app and back up its data directory before upgrading. Global agen
 
 ## 📖 Classic Gloss mode
 
-Screenshots of the classic Gloss reader (the upstream project is
-[computersniper/gloss](https://github.com/computersniper/gloss)):
+The classic reader remains available in Gloss 2.0:
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="./docs/reader-summary.png" alt="Classic Gloss reader: a paper PDF beside an AI-generated structured summary" />
+      <img src="./docs/screenshots/classic-attention.png" alt="Classic Gloss reader: a paper PDF beside an AI-generated structured summary" />
     </td>
     <td width="25%" valign="top">
       <img src="./docs/app-mindmap.png" alt="Classic Gloss interactive mind map with a paper concept detail panel" />
